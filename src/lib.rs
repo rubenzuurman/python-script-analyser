@@ -10,18 +10,36 @@ pub struct Function {
 impl Function {
     
     pub fn create(source_lines: Vec<String>) -> Self {
-        // Regex for getting function name index of first line.
+        // Get first line of the source.
         let def_line: &str = match source_lines.get(0) {
+            Some(v) => v, 
             None => panic!("Unable to get first line from source."), 
-            Some(v) => v
         };
-        let re_name = Regex::new(r"def (?<name>\w+)").unwrap();
-        let Some(captures) = re_name.captures(&def_line) else {
-            panic!("No function name found in string '{}'.", def_line);
-        };
-        println!("Name: {}", &captures["name"]);
         
-        return Function {name: String::from("temp_name"), parameters: vec![String::from("param1"), String::from("param2")], source: vec![String::from("Line 1"), String::from("Line 2")]};
+        // Initialize regex for getting the function name and the parameters from the function definition.
+        let re_name_params = Regex::new(r"^def (?<name>\w+)\((?<params>[\w ,]*)\):$").unwrap();
+        let re_replace_space = Regex::new(" +").unwrap();
+        
+        // Match regex and initialize function properties.
+        let name_params_captures = re_name_params.captures(def_line);
+        let mut name: String = String::from("");
+        let mut parameters: Vec<String> = Vec::new();
+        
+        // Match regex captures and set function properties.
+        match name_params_captures {
+            Some(a) => {
+                name = String::from(&a["name"]);
+                for param in a["params"].split(",") {
+                    parameters.push(String::from(re_replace_space.replace_all(param, " ")));
+                }
+            }, 
+            None => {
+                eprintln!("Invalid function definition on the first line of the source '{}'.", def_line);
+            }
+        }
+        
+        // Return function object.
+        return Function {name: name, parameters: parameters, source: source_lines};
     }
     
 }

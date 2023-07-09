@@ -24,6 +24,7 @@ fn get_file_lines(filename: &str) -> Result<Vec<String>, io::Error> {
 
 fn main() {
     let func: Function = Function::create(vec![String::from("def func_name(param1, param2):"), String::from("Appel")]);
+    println!("{:?}", func);
     
     // Get command line arguments.
     let args: Vec<String> = env::args().collect();
