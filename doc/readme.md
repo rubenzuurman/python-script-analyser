@@ -6,3 +6,4 @@ Goal of the project:
     - Notify the user when a function is never called.
     - Notify the user when a refenced variable is either not defined or 'out of scope'. This doesn't give an error but sometimes leads to undesired behaviour. This is the primary function of the program.
     - Notify the user of inconsistent indentation.
+    - Notify the user of usage of global variables without using 'global \<variable\>' in the function.
