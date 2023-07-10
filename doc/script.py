@@ -36,6 +36,14 @@ def function_name(param1, param2, param3):
         if i == 10:
             print("Yes!")
 
+def add(a, b, sub=False):
+    # Subtract.
+    if sub:
+        return a - b
+    # Add.
+    else:
+        return a + b
+
 def main():
     print(rnd.randint(0, 10))
 

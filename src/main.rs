@@ -4,7 +4,7 @@ use std::io;
 
 use regex::Regex;
 
-use python_script_analyser::Function;
+use python_script_analyser::{Function, Line};
 
 /*
 
@@ -24,9 +24,6 @@ fn get_file_lines(filename: &str) -> Result<Vec<String>, io::Error> {
 }
 
 fn main() {
-    let func: Function = Function::create(vec![String::from("def func_name(param1, param2):"), String::from("Appel")]);
-    println!("{:?}", func);
-    
     // Get command line arguments.
     let args: Vec<String> = env::args().collect();
     
@@ -52,26 +49,89 @@ fn main() {
     // Set up regex strings.
     let re_import = Regex::new(r"^import (?<import>[\w+ ,]+) *$").unwrap();
     let re_from_import = Regex::new(r"^from (?<module>\w+) import (?<objects>[\w ,]+) *$").unwrap();
-    let re_def = Regex::new(r"^def (?<def>\w+)\((?<params>[\w ,]*)\): *$").unwrap();
+    let re_def = Regex::new(r"^def (?<def>\w+)\((?<params>[\w ,=]*)\): *$").unwrap();
     let re_class = Regex::new(r"^class (?<class>\w+): *$").unwrap();
     
     // Set up regex strings for further investigation.
     let re_import_check_as = Regex::new(r"^\w+ as \w+$").unwrap();
     let re_import_replace_space = Regex::new(r" +").unwrap();
+    let re_get_indentation = Regex::new(r"^(?<indentation>[ \t]*).*$").unwrap();
     
     // Set up vector to hold global imports.
     let mut imported_modules: Vec<String> = Vec::new();
     let mut imported_objects: Vec<String> = Vec::new();
+    let mut functions: Vec<Function> = Vec::new();
+    
+    // Initialize variables to keep track of functions and classes.
+    let mut in_function: bool = false;
+    let mut in_class: bool = false;
+    
+    let mut current_function_indentation_length: usize = 0;
+    let mut current_function_indentation_set: bool = false;
+    let mut current_function_source: Vec<Line> = Vec::new();
     
     // Loop over all lines and create objects or add to import vectors.
     for (index, line) in lines.iter().enumerate() {
+        // Skip empty lines.
+        if line.trim() == "" {
+            continue;
+        }
+        
+        if in_function {
+            // Check if the indentation is less than the current function indentation.
+            let get_indentation_captures = re_get_indentation.captures(&line);
+            if !current_function_indentation_set {
+                match get_indentation_captures {
+                    Some(a) => {
+                        // Set indentation length for function.
+                        current_function_indentation_length = String::from(&a["indentation"]).len();
+                        current_function_indentation_set = true;
+                        
+                        current_function_source.push(Line::create(index + 1, line));
+                    }, 
+                    None => {
+                        // Should not be reached, it always matches.
+                        eprintln!("Line {}: This state should not be reached.", index + 1);
+                        return;
+                    }
+                }
+            } else {
+                match get_indentation_captures {
+                    Some(a) => {
+                        let indentation_length: usize = String::from(&a["indentation"]).len();
+                        if indentation_length >= current_function_indentation_length {
+                            // Line in function.
+                            current_function_source.push(Line::create(index + 1, line));
+                        } else {
+                            // End of function.
+                            // Create function object and add to functions vector.
+                            let function: Function = Function::create(current_function_source);
+                            println!("Adding function with name '{}' to functions.", function.get_name());
+                            functions.push(function);
+                            
+                            // Reset function tracking variables.
+                            in_function = false;
+                            current_function_indentation_length = 0;
+                            current_function_indentation_set = false;
+                            current_function_source = Vec::new();
+                        }
+                    }, 
+                    None => {
+                        // Should not be reached, it always matches.
+                        eprintln!("Line {}: This state should not be reached.", index + 1);
+                        return;
+                    }
+                }
+            }
+        }
+        
         let import_captures = re_import.captures(&line);
         let from_import_captures = re_from_import.captures(&line);
         let def_captures = re_def.captures(&line);
         let class_captures = re_class.captures(&line);
         match import_captures {
             Some(a) => {
-                println!("Line {}: Matching import definition: '{}' '{}'", index, line, &a["import"]);
+                println!("Line {}: Matching import definition: '{}' '{}'", index + 1, line, &a["import"]);
                 for import in a["import"].split(",") {
                     let import_trim: &str = &re_import_replace_space.replace_all(&import.trim(), " ");
                     //println!("Import trim: '{}'", import_trim);
@@ -85,7 +145,7 @@ fn main() {
                         None => {
                             if import_trim.contains(" ") {
                                 // Import module, but does contain a space (e.g. 'import g    h').
-                                eprintln!("Line {}: Import cannot contain spaces '{}' (specifically '{}').", index, line, import_trim);
+                                eprintln!("Line {}: Import cannot contain spaces '{}' (specifically '{}').", index + 1, line, import_trim);
                             } else {
                                 // Import module.
                                 imported_modules.push(String::from(import_trim));
@@ -96,7 +156,7 @@ fn main() {
             }, 
             None => match from_import_captures {
                 Some(b) => {
-                    println!("Line {}: Matching from import definition: '{}'", index, line);
+                    println!("Line {}: Matching from import definition: '{}'", index + 1, line);
                     for object in b["objects"].split(",") {
                         let object_trim: &str = &re_import_replace_space.replace_all(&object.trim(), " ");
                         //println!("Import from trim: '{}'", object_trim);
@@ -110,7 +170,7 @@ fn main() {
                             None => {
                                 if object_trim.contains(" ") {
                                     // Import object, but does contain a space (e.g. 'from a import b as c').
-                                    eprintln!("Line {}: Import cannot contain spaces '{}' (specifically '{}').", index, line, object_trim);
+                                    eprintln!("Line {}: Import cannot contain spaces '{}' (specifically '{}').", index + 1, line, object_trim);
                                 } else {
                                     // Import object.
                                     imported_objects.push(String::from(object_trim));
@@ -121,11 +181,17 @@ fn main() {
                 }, 
                 None => match def_captures {
                     Some(_c) => {
-                        println!("Line {}: Matching function definition: '{}'", index, line);
+                        println!("Line {}: Matching function definition: '{}'", index + 1, line);
+                        
+                        // Set in_function bool.
+                        in_function = true;
+                        
+                        current_function_source.push(Line::create(index + 1, line));
+                        
                     }, 
                     None => match class_captures {
                         Some(_d) => {
-                            println!("Line {}: Matching class definition: '{}'", index, line);
+                            println!("Line {}: Matching class definition: '{}'", index + 1, line);
                         }, 
                         None => {
                             continue;
@@ -135,8 +201,15 @@ fn main() {
             }
         }
     }
-    println!("Imported modules: '{:?}'", imported_modules);
+    
+    println!("\nImported modules: '{:?}'", imported_modules);
     println!("Imported objects: '{:?}'", imported_objects);
+    for function in functions {
+        println!("\nFunction source '{}':", function.get_name());
+        for line in function.get_source() {
+            println!("{}", line);
+        }
+    }
     
     // Maybe create struct to handle the file. Create new substruct for function definitions for example.
 }
