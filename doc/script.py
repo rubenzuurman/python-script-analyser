@@ -9,6 +9,11 @@ from f import g, h
 
 import i  j    g
 
+from a import b as c
+from d import e as f, g, h as i
+from j import k aas, baas as p oop, f ish as dog, clo se as you tube
+
+
 class Rect:
     
     def __init__():

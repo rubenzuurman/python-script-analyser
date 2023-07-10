@@ -11,6 +11,7 @@ use python_script_analyser::Function;
 Struct containing a function after "(no indentation)def *(*):".
 Struct containing a class after "(no indentation)class *(*):".
     Struct containing class method in class.
+
 */
 
 fn get_file_lines(filename: &str) -> Result<Vec<String>, io::Error> {
@@ -73,20 +74,20 @@ fn main() {
                 println!("Line {}: Matching import definition: '{}' '{}'", index, line, &a["import"]);
                 for import in a["import"].split(",") {
                     let import_trim: &str = &re_import_replace_space.replace_all(&import.trim(), " ");
-                    println!("'{}'", import_trim);
+                    //println!("Import trim: '{}'", import_trim);
                     let check_as_captures = re_import_check_as.captures(&import_trim);
                     match check_as_captures {
-                        Some(b) => {
-                            // Single import module as some other name.
+                        Some(_b) => {
+                            // Import module as some other name.
                             let import_split: Vec<&str> = import_trim.split(" as ").collect();
                             imported_modules.push(String::from(import_split[1]));
                         }, 
                         None => {
                             if import_trim.contains(" ") {
-                                // Single import, but does contain a spaces (e.g. 'import g    h').
-                                eprintln!("Line {}: Import cannot contain spaces '{}'.", index, line);
+                                // Import module, but does contain a space (e.g. 'import g    h').
+                                eprintln!("Line {}: Import cannot contain spaces '{}' (specifically '{}').", index, line, import_trim);
                             } else {
-                                // Single import module.
+                                // Import module.
                                 imported_modules.push(String::from(import_trim));
                             }
                         }
@@ -96,13 +97,34 @@ fn main() {
             None => match from_import_captures {
                 Some(b) => {
                     println!("Line {}: Matching from import definition: '{}'", index, line);
+                    for object in b["objects"].split(",") {
+                        let object_trim: &str = &re_import_replace_space.replace_all(&object.trim(), " ");
+                        //println!("Import from trim: '{}'", object_trim);
+                        let check_as_captures = re_import_check_as.captures(&object_trim);
+                        match check_as_captures {
+                            Some(_b) => {
+                                // Import object as some other name.
+                                let object_split: Vec<&str> = object_trim.split(" as ").collect();
+                                imported_objects.push(String::from(object_split[1]));
+                            }, 
+                            None => {
+                                if object_trim.contains(" ") {
+                                    // Import object, but does contain a space (e.g. 'from a import b as c').
+                                    eprintln!("Line {}: Import cannot contain spaces '{}' (specifically '{}').", index, line, object_trim);
+                                } else {
+                                    // Import object.
+                                    imported_objects.push(String::from(object_trim));
+                                }
+                            }
+                        }
+                    }
                 }, 
                 None => match def_captures {
-                    Some(c) => {
+                    Some(_c) => {
                         println!("Line {}: Matching function definition: '{}'", index, line);
                     }, 
                     None => match class_captures {
-                        Some(d) => {
+                        Some(_d) => {
                             println!("Line {}: Matching class definition: '{}'", index, line);
                         }, 
                         None => {
@@ -112,9 +134,9 @@ fn main() {
                 }
             }
         }
-        
-        println!("'{:?}'", imported_modules);
     }
+    println!("Imported modules: '{:?}'", imported_modules);
+    println!("Imported objects: '{:?}'", imported_objects);
     
     // Maybe create struct to handle the file. Create new substruct for function definitions for example.
 }
