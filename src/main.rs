@@ -49,7 +49,7 @@ fn main() {
     // Set up regex strings.
     let re_import = Regex::new(r"^import (?<import>[\w+ ,]+) *$").unwrap();
     let re_from_import = Regex::new(r"^from (?<module>\w+) import (?<objects>[\w ,]+) *$").unwrap();
-    let re_def = Regex::new(r"^def (?<def>\w+)\((?<params>[\w ,=]*)\): *$").unwrap();
+    let re_def = Regex::new(r"^def (?<name>\w+)\((?<params>[\w ,=\*]*)\):$").unwrap();
     let re_class = Regex::new(r"^class (?<class>\w+): *$").unwrap();
     
     // Set up regex strings for further investigation.
@@ -64,7 +64,7 @@ fn main() {
     
     // Initialize variables to keep track of functions and classes.
     let mut in_function: bool = false;
-    let mut in_class: bool = false;
+    let _in_class: bool = false;
     
     let mut current_function_indentation_length: usize = 0;
     let mut current_function_indentation_set: bool = false;
@@ -105,7 +105,7 @@ fn main() {
                         } else {
                             // End of function.
                             // Create function object and add to functions vector.
-                            let function: Function = Function::create(current_function_source);
+                            let function: Function = Function::create(&current_function_source);
                             println!("Adding function with name '{}' to functions.", function.get_name());
                             functions.push(function);
                             
