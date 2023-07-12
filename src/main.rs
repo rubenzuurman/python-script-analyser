@@ -1,10 +1,8 @@
 use std::env;
-use std::fs;
-use std::io;
 
 use regex::Regex;
 
-use python_script_analyser::{Function, Line};
+use python_script_analyser::{Function, Line, Class, get_file_lines};
 
 /*
 
@@ -13,15 +11,6 @@ Struct containing a class after "(no indentation)class *(*):".
     Struct containing class method in class.
 
 */
-
-fn get_file_lines(filename: &str) -> Result<Vec<String>, io::Error> {
-    let mut result: Vec<String> = Vec::new();
-    let contents = fs::read_to_string(filename)?;
-    for line in contents.lines() {
-        result.push(line.to_string());
-    }
-    return Ok(result);
-}
 
 fn main() {
     // Get command line arguments.
@@ -46,29 +35,38 @@ fn main() {
         }
     };
     
+    // TODO: Do one pass over lines to check for indentation inconsistencies.
+    
     // Set up regex strings.
     let re_import = Regex::new(r"^import (?<import>[\w+ ,]+) *$").unwrap();
     let re_from_import = Regex::new(r"^from (?<module>\w+) import (?<objects>[\w ,]+) *$").unwrap();
-    let re_def = Regex::new(r"^def (?<name>\w+)\((?<params>[\w ,=\*]*)\):$").unwrap();
-    let re_class = Regex::new(r"^class (?<class>\w+): *$").unwrap();
+    let re_def = Regex::new(r"^def (?<name>\w+)\((?<params>.*)\): *$").unwrap();
+    let re_class = Regex::new(r"^class (?<class>\w+)(\(\w+\))?: *$").unwrap();
+    // TODO: Implement detection of global variables.
+    // TODO: Implement detection of program root.
     
     // Set up regex strings for further investigation.
     let re_import_check_as = Regex::new(r"^\w+ as \w+$").unwrap();
     let re_import_replace_space = Regex::new(r" +").unwrap();
-    let re_get_indentation = Regex::new(r"^(?<indentation>[ \t]*).*$").unwrap();
+    let re_get_indentation = Regex::new(r"^(?<indentation> *).*$").unwrap();
     
     // Set up vector to hold global imports.
     let mut imported_modules: Vec<String> = Vec::new();
     let mut imported_objects: Vec<String> = Vec::new();
     let mut functions: Vec<Function> = Vec::new();
+    let mut classes: Vec<Class> = Vec::new();
     
     // Initialize variables to keep track of functions and classes.
     let mut in_function: bool = false;
-    let _in_class: bool = false;
+    let mut in_class: bool = false;
     
     let mut current_function_indentation_length: usize = 0;
     let mut current_function_indentation_set: bool = false;
     let mut current_function_source: Vec<Line> = Vec::new();
+    
+    let mut current_class_indentation_length: usize = 0;
+    let mut current_class_indentation_set: bool = false;
+    let mut current_class_source: Vec<Line> = Vec::new();
     
     // Loop over all lines and create objects or add to import vectors.
     for (index, line) in lines.iter().enumerate() {
@@ -77,54 +75,68 @@ fn main() {
             continue;
         }
         
+        // This regex execution will match any non-empty line.
+        let get_indentation_captures = re_get_indentation.captures(&line).unwrap();
+        let indentation_length: usize = String::from(&get_indentation_captures["indentation"]).len();
+        
+        if in_function && in_class {
+            println!("This is kinda bad, in function and in class.");
+        }
+        
         if in_function {
-            // Check if the indentation is less than the current function indentation.
-            let get_indentation_captures = re_get_indentation.captures(&line);
             if !current_function_indentation_set {
-                match get_indentation_captures {
-                    Some(a) => {
-                        // Set indentation length for function.
-                        current_function_indentation_length = String::from(&a["indentation"]).len();
-                        current_function_indentation_set = true;
-                        
-                        current_function_source.push(Line::create(index + 1, line));
-                    }, 
-                    None => {
-                        // Should not be reached, it always matches.
-                        eprintln!("Line {}: This state should not be reached.", index + 1);
-                        return;
-                    }
-                }
+                // Set indentation length for function.
+                current_function_indentation_length = indentation_length;
+                current_function_indentation_set = true;
+                
+                current_function_source.push(Line::create(index + 1, line));
             } else {
-                match get_indentation_captures {
-                    Some(a) => {
-                        let indentation_length: usize = String::from(&a["indentation"]).len();
-                        if indentation_length >= current_function_indentation_length {
-                            // Line in function.
-                            current_function_source.push(Line::create(index + 1, line));
-                        } else {
-                            // End of function.
-                            // Create function object and add to functions vector.
-                            let function: Function = Function::create(&current_function_source);
-                            println!("Adding function with name '{}' to functions.", function.get_name());
-                            functions.push(function);
-                            
-                            // Reset function tracking variables.
-                            in_function = false;
-                            current_function_indentation_length = 0;
-                            current_function_indentation_set = false;
-                            current_function_source = Vec::new();
-                        }
-                    }, 
-                    None => {
-                        // Should not be reached, it always matches.
-                        eprintln!("Line {}: This state should not be reached.", index + 1);
-                        return;
-                    }
+                // Check if the indentation is less than the current function indentation.
+                if indentation_length >= current_function_indentation_length {
+                    // Line in function.
+                    current_function_source.push(Line::create(index + 1, line));
+                } else {
+                    // End of function.
+                    // Create function object and add to functions vector.
+                    let function: Function = Function::create(&current_function_source);
+                    println!("Adding function with name '{}' to functions.", function.get_name());
+                    functions.push(function);
+                    
+                    // Reset function tracking variables.
+                    in_function = false;
+                    current_function_indentation_length = 0;
+                    current_function_indentation_set = false;
+                    current_function_source = Vec::new();
                 }
             }
         }
-        
+        if in_class {
+            // Check if the indentation is less than the current function indentation.
+            if !current_class_indentation_set {
+                // Set indentation length for class.
+                current_class_indentation_length = indentation_length;
+                current_class_indentation_set = true;
+                
+                current_class_source.push(Line::create(index + 1, line));
+            } else {
+                if indentation_length >= current_class_indentation_length {
+                    // Line in class.
+                    current_class_source.push(Line::create(index + 1, line));
+                } else {
+                    // End of class.
+                    // Create class object and add to classes vector.
+                    let class: Class = Class::create(&current_class_source);
+                    println!("Adding class with name '{}' to classes.", class.get_name());
+                    classes.push(class);
+                    
+                    // Reset class tracking variables.
+                    in_class = false;
+                    current_class_indentation_length = 0;
+                    current_class_indentation_set = false;
+                    current_class_source = Vec::new();
+                }
+            }
+        }
         let import_captures = re_import.captures(&line);
         let from_import_captures = re_from_import.captures(&line);
         let def_captures = re_def.captures(&line);
@@ -183,7 +195,6 @@ fn main() {
                     Some(_c) => {
                         println!("Line {}: Matching function definition: '{}'", index + 1, line);
                         
-                        // Set in_function bool.
                         in_function = true;
                         
                         current_function_source.push(Line::create(index + 1, line));
@@ -192,6 +203,10 @@ fn main() {
                     None => match class_captures {
                         Some(_d) => {
                             println!("Line {}: Matching class definition: '{}'", index + 1, line);
+                            
+                            in_class = true;
+                            
+                            current_class_source.push(Line::create(index + 1, line));
                         }, 
                         None => {
                             continue;
@@ -202,12 +217,38 @@ fn main() {
         }
     }
     
+    // Check if a function or class was getting collected but the source ended.
+    if in_function {
+        // Create function object and add to classmethods vector.
+        let function: Function = Function::create(&current_function_source);
+        println!("Adding function with name '{}' to functions.", function.get_name());
+        functions.push(function);
+    }
+    if in_class {
+        // Create class object and add to classes vector.
+        let class: Class = Class::create(&current_class_source);
+        println!("Adding class with name '{}' to classes.", class.get_name());
+        classes.push(class);
+    }
+    
     println!("\nImported modules: '{:?}'", imported_modules);
     println!("Imported objects: '{:?}'", imported_objects);
     for function in functions {
         println!("\nFunction source '{}':", function.get_name());
         for line in function.get_source() {
             println!("{}", line);
+        }
+    }
+    for class in classes {
+        println!("\nClass source '{}':", class.get_name());
+        for line in class.get_source() {
+            println!("{}", line);
+        }
+        println!("Class methods:");
+        for method in class.get_methods() {
+            for line in method.get_source() {
+                println!("{}", line);
+            }
         }
     }
     

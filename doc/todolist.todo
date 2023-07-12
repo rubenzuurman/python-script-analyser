@@ -1,0 +1,5 @@
+Tests:
+ ☐ Function at end of file with no new line. @created(23-07-12 14:50)
+ ☐ Function in the middle of file with no empty line after. @created(23-07-12 14:51)
+ ☐ Class at end of file with no new line. @created(23-07-12 14:54)
+ ☐ Class in the middle of file with no empty line after. @created(23-07-12 14:54)
