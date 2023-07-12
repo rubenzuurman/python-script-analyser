@@ -18,3 +18,5 @@ Things that are not going to be supported:
 12-07-2023
 Maybe pretend the entire file (except the root) is a function, and handle the file as a function (aka get list of functions, imports, classes, variables), but handle it as a root case (the global keyword can be used in this function). Then analyse any subfunction the same way (but without root), and any class can be handled with its own handling function (which should only be slightly different). This way you can create a nested analysis, in which each object deeper has its own scope.
 Also create warning codes so the user can suppress warnings that they don't want to see. (Be careful not to create a linter, those already exist.)
+
+15.56: Pushed local git repository to remote github repository.
