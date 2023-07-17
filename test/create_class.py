@@ -6,8 +6,8 @@ class Rect(Shape):
         self.a=a
         self.b=b+1
     
-    STATIC_B=6
-    ANOTHER_STATIC     =     5
+    STATIC_B=6     
+    ANOTHER_STATIC     =     5         
     
     def func2(self, a, b, c=2):  
         self.c = self.a * a + self.b * b + c
