@@ -2,8 +2,6 @@ use std::env;
 
 use python_script_analyser::{File, get_file_lines, vec_str_to_vec_line};
 
-static STRING: &str = r"{indentation}class Rect:";
-
 fn main() {
     // Get command line arguments.
     let args: Vec<String> = env::args().collect();

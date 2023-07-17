@@ -2,16 +2,17 @@ use std::fs;
 use std::io;
 use std::path::Path;
 use std::ffi::OsStr;
+use std::collections::HashMap;
 
 use regex::Regex;
 
-static PATTERN_INDENTATION: &str = r"^(?P<indentation> *).*$";
-static PATTERN_IMPORT: &str = r"^[\t ]*import[\t ]+(?P<modules>[\w, \t]+)$";
-static PATTERN_FROM_IMPORT: &str = r"^[\t ]*from[\t ]+(?P<module>\w+)[\t ]+import[\t ]+(?P<objects>[\w ,]+)$";
-static PATTERN_GLOBAL_VARIABLE: &str = r"^(?P<varname>\w+)[\t ]*=[\t ]*.*$";
-static PATTERN_FUNCTION_START: &str = r"^(?P<indentation>[\t ]*)def[\t ]+(?P<name>\w+)[\t ]*\((?P<params>.*)\)[\t ]*(->[\t ]*[\w, \[\]]+[\t ]*)?:[\t ]*$";
-static PATTERN_CLASS_START: &str = r"^(?P<indentation>[\t ]*)class[\t ]+(?P<name>\w+)[\t ]*(\((?P<parent>[\w \t]*)\))?[\t ]*:[\t ]*$";
-static PATTERN_CLASS_VARIABLE: &str = r"^[\t ]{INDENTATION}(?P<varname>\w+)[\t ]*=[\t ]*(?P<varvalue>.+)[\t ]*$"; // INDENTATION will be replaced with the current class indentation when this pattern is used.
+static PATTERN_INDENTATION: &str = r"^(?P<indentation>[\t ]*).*$";
+static PATTERN_IMPORT: &str = r"^[\t ]*import[\t ]+(?P<modules>[\w, \t\.]+)$";
+static PATTERN_FROM_IMPORT: &str = r"^[\t ]*from[\t ]+(?P<module>[\w\.]+)[\t ]+import[\t ]+(?P<objects>[\w ,\t]+)$";
+static PATTERN_GLOBAL_VARIABLE: &str = r"^[\t ]*(?P<varname>\w+)[\t ]*(:.*)?[\t ]*=[\t ]*.*$";
+static PATTERN_FUNCTION_START: &str = r"^(?P<indentation>[\t ]*)def[\t ]+(?P<name>\w+)[\t ]*\((?P<params>.*)\)[\t ]*(->[\t ]*[\w, \t\[\]]+[\t ]*)?:[\t ]*$";
+static PATTERN_CLASS_START: &str = r"^(?P<indentation>[\t ]*)class[\t ]+(?P<name>\w+)[\t ]*(\((?P<parent>[\w \t\[\]\.,]*)\))?[\t ]*:[\t ]*$";
+static PATTERN_CLASS_VARIABLE: &str = r"^[\t ]{INDENTATION}(?P<varname>\w+)[\t ]*(:.*)?[\t ]*=[\t ]*(?P<varvalue>.+)[\t ]*$"; // INDENTATION will be replaced with the current class indentation when this pattern is used.
 
 #[derive(Clone, Debug)]
 pub struct Line {
@@ -760,6 +761,325 @@ pub fn remove_empty_lines(mut source: Vec<Line>) -> Vec<Line> {
 mod tests {
     
     use super::*;
+    
+    #[test]
+    fn test_regex_pattern_indentation() {
+        // Test PATTERN_INDENTATION (should match anything).
+        // Construct hashmap containing strings to match.
+        let mut test_strings: HashMap<u32, &str> = HashMap::new();
+        test_strings.insert(0, "     Hello world!  \\v   \t\t\t 文閩音");
+        test_strings.insert(1, "        self.start_time = time.time()");
+        test_strings.insert(2, "        result[\"gc_uncollectable\"] = self.gc_uncollectable  ");
+        test_strings.insert(3, "class GcLogger:");
+        test_strings.insert(4, "            if i % 3 == 0:");
+        test_strings.insert(5, "    print(\"hihi\")");
+        test_strings.insert(6, "    ");
+        test_strings.insert(7, "    pub fn create(number: usize, text: &str) -> Self {");
+        test_strings.insert(8, "                                                                    \t\t\t\t\t\t\t\t    print(\"Banaan\")");
+        
+        // Construct hashmap containing hashmaps containing values of named groups.
+        let mut test_matches: HashMap<u32, HashMap<&str, &str>> = HashMap::new();
+        test_matches.insert(0, HashMap::from([("indentation", "     ")]));
+        test_matches.insert(1, HashMap::from([("indentation", "        ")]));
+        test_matches.insert(2, HashMap::from([("indentation", "        ")]));
+        test_matches.insert(3, HashMap::from([("indentation", "")]));
+        test_matches.insert(4, HashMap::from([("indentation", "            ")]));
+        test_matches.insert(5, HashMap::from([("indentation", "    ")]));
+        test_matches.insert(6, HashMap::from([("indentation", "    ")]));
+        test_matches.insert(7, HashMap::from([("indentation", "    ")]));
+        test_matches.insert(8, HashMap::from([("indentation", "                                                                    \t\t\t\t\t\t\t\t    ")]));
+        
+        // Run tests.
+        let re = Regex::new(PATTERN_INDENTATION).unwrap();
+        for (key_str, value_str) in test_strings.iter() {
+            let capt = re.captures(value_str);
+            let map = test_matches.get(&key_str).unwrap();
+            match capt {
+                Some(a) => {
+                    for (key, value) in map.iter() {
+                        assert_eq!(&&a[*key], value);
+                    }
+                }, 
+                None => panic!("ERROR: String '{}' should have matched 'PATTERN_INDENTATION', but didn't.", value_str)
+            }
+        }
+    }
+    
+    #[test]
+    fn test_regex_pattern_import() {
+        // Test PATTERN_IMPORT.
+        // Construct hashmap containing strings to match.
+        let mut test_strings: HashMap<u32, &str> = HashMap::new();
+        test_strings.insert(0, "import math");
+        test_strings.insert(1, "   import     sys     \t,    \t re \t  , \t\tdatetime\t   ,  \t   zoneinfo  \t ");
+        test_strings.insert(2, "  \t  import a  \t  ,   b   \t\t\t   ");
+        test_strings.insert(3, "        \t\timport  \t time  ");
+        test_strings.insert(4, "import mypy.errorcodes as codes");
+        test_strings.insert(5, "    import mypy.checkexpr");
+        test_strings.insert(6, "import glob as fileglob");
+        test_strings.insert(7, "    import tomllib");
+        test_strings.insert(8, "         \t\t\t\t   import       banaaaan     as     \t\t\t    appel     \t\t\t      ");
+        
+        // Construct hashmap containing hashmaps containing values of named groups.
+        let mut test_matches: HashMap<u32, HashMap<&str, &str>> = HashMap::new();
+        test_matches.insert(0, HashMap::from([("modules", "math")]));
+        test_matches.insert(1, HashMap::from([("modules", "sys     \t,    \t re \t  , \t\tdatetime\t   ,  \t   zoneinfo  \t ")]));
+        test_matches.insert(2, HashMap::from([("modules", "a  \t  ,   b   \t\t\t   ")]));
+        test_matches.insert(3, HashMap::from([("modules", "time  ")]));
+        test_matches.insert(4, HashMap::from([("modules", "mypy.errorcodes as codes")]));
+        test_matches.insert(5, HashMap::from([("modules", "mypy.checkexpr")]));
+        test_matches.insert(6, HashMap::from([("modules", "glob as fileglob")]));
+        test_matches.insert(7, HashMap::from([("modules", "tomllib")]));
+        test_matches.insert(8, HashMap::from([("modules", "banaaaan     as     \t\t\t    appel     \t\t\t      ")]));
+        
+        // Run tests.
+        let re = Regex::new(PATTERN_IMPORT).unwrap();
+        for (key_str, value_str) in test_strings.iter() {
+            let capt = re.captures(value_str);
+            let map = test_matches.get(&key_str).unwrap();
+            match capt {
+                Some(a) => {
+                    for (key, value) in map.iter() {
+                        assert_eq!(&&a[*key], value);
+                    }
+                }, 
+                None => panic!("ERROR: String '{}' should have matched 'PATTERN_IMPORT', but didn't.", value_str)
+            }
+        }
+    }
+    #[test]
+    fn test_regex_pattern_from_import() {
+        // Test PATTERN_FROM_IMPORT.
+        // Construct hashmap containing strings to match.
+        let mut test_strings: HashMap<u32, &str> = HashMap::new();
+        test_strings.insert(0, "from a import b as c");
+        test_strings.insert(1, "   \t\t\t    from     \t d\timport     e    as   f   ,   g   ,   h   \t\t\t   as i  \t ");
+        test_strings.insert(2, "from j import k aas, baas as p oop, f ish as dog, clo se as you       tube");
+        test_strings.insert(3, "from mypy.options import PER_MODULE_OPTIONS, Options");
+        test_strings.insert(4, "from     numpy.core.multiarray     import    \t\t _flagdict    \t,  \t flagsobj  \t     \t\t\t");
+        test_strings.insert(5, "from mypy.infer import ArgumentInferContext, infer_function_type_arguments, infer_type_arguments");
+        test_strings.insert(6, "from mypy import applytype, erasetype, join, message_registry, nodes, operators, types");
+        test_strings.insert(7, "   \t\t\t from    \t\t        \t\t\t\t\t\t\t   mypy.semanal_enum        import         \t\t\t\tENUM_BASES");
+        test_strings.insert(8, "    from . import _distributor_init");
+        test_strings.insert(9, "        from numpy.__config__ import show as show_config");
+        
+        // Construct hashmap containing hashmaps containing values of named groups.
+        let mut test_matches: HashMap<u32, HashMap<&str, &str>> = HashMap::new();
+        test_matches.insert(0, HashMap::from([("module", "a"), ("objects", "b as c")]));
+        test_matches.insert(1, HashMap::from([("module", "d"), ("objects", "e    as   f   ,   g   ,   h   \t\t\t   as i  \t ")]));
+        test_matches.insert(2, HashMap::from([("module", "j"), ("objects", "k aas, baas as p oop, f ish as dog, clo se as you       tube")]));
+        test_matches.insert(3, HashMap::from([("module", "mypy.options"), ("objects", "PER_MODULE_OPTIONS, Options")]));
+        test_matches.insert(4, HashMap::from([("module", "numpy.core.multiarray"), ("objects", "_flagdict    \t,  \t flagsobj  \t     \t\t\t")]));
+        test_matches.insert(5, HashMap::from([("module", "mypy.infer"), ("objects", "ArgumentInferContext, infer_function_type_arguments, infer_type_arguments")]));
+        test_matches.insert(6, HashMap::from([("module", "mypy"), ("objects", "applytype, erasetype, join, message_registry, nodes, operators, types")]));
+        test_matches.insert(7, HashMap::from([("module", "mypy.semanal_enum"), ("objects", "ENUM_BASES")]));
+        test_matches.insert(8, HashMap::from([("module", "."), ("objects", "_distributor_init")]));
+        test_matches.insert(9, HashMap::from([("module", "numpy.__config__"), ("objects", "show as show_config")]));
+        
+        
+        // Run tests.
+        let re = Regex::new(PATTERN_FROM_IMPORT).unwrap();
+        for (key_str, value_str) in test_strings.iter() {
+            let capt = re.captures(value_str);
+            let map = test_matches.get(&key_str).unwrap();
+            match capt {
+                Some(a) => {
+                    for (key, value) in map.iter() {
+                        assert_eq!(&&a[*key], value);
+                    }
+                }, 
+                None => panic!("ERROR: String '{}' should have matched 'PATTERN_FROM_IMPORT', but didn't.", value_str)
+            }
+        }
+    }
+    
+    #[test]
+    fn test_regex_pattern_global_variable() {
+        // Test PATTERN_GLOBAL_VARIABLE.
+        // Construct hashmap containing strings to match.
+        let mut test_strings: HashMap<u32, &str> = HashMap::new();
+        test_strings.insert(0, "_flagnames    =    ['C_CONTIGUOUS', 'F_CONTIGUOUS'    , 'ALIGNED'   ,   'WRITEABLE', 'OWNDATA', 'WRITEBACKIFCOPY']");
+        test_strings.insert(1, "_pointer_type_cache = {}");
+        test_strings.insert(2, "    __NUMPY_SETUP__ = False");
+        test_strings.insert(3, "    __all__ = ['exceptions', 'ModuleDeprecationWarning', 'VisibleDeprecationWarning', 'ComplexWarning', 'TooHardError', 'AxisError']");
+        test_strings.insert(4, "GLOB1 = 1");
+        test_strings.insert(5, "    GLOB_PARAMETER = 100 ** 2");
+        test_strings.insert(6, "GLOB_NAME = \"Bananas are pretty good\"");
+        test_strings.insert(7, "GLOB_OBJ: int = time.time()");
+        test_strings.insert(8, "       GLOBAL_MAP: List[Tuple[np.uint16, List[str, int]], str]     \t\t\t    =     []   \t\t\t \t   \t");
+        
+        // Construct hashmap containing hashmaps containing values of named groups.
+        let mut test_matches: HashMap<u32, HashMap<&str, &str>> = HashMap::new();
+        test_matches.insert(0, HashMap::from([("varname", "_flagnames")]));
+        test_matches.insert(1, HashMap::from([("varname", "_pointer_type_cache")]));
+        test_matches.insert(2, HashMap::from([("varname", "__NUMPY_SETUP__")]));
+        test_matches.insert(3, HashMap::from([("varname", "__all__")]));
+        test_matches.insert(4, HashMap::from([("varname", "GLOB1")]));
+        test_matches.insert(5, HashMap::from([("varname", "GLOB_PARAMETER")]));
+        test_matches.insert(6, HashMap::from([("varname", "GLOB_NAME")]));
+        test_matches.insert(7, HashMap::from([("varname", "GLOB_OBJ")]));
+        test_matches.insert(8, HashMap::from([("varname", "GLOBAL_MAP")]));
+        
+        // Run tests.
+        let re = Regex::new(PATTERN_GLOBAL_VARIABLE).unwrap();
+        for (key_str, value_str) in test_strings.iter() {
+            let capt = re.captures(value_str);
+            let map = test_matches.get(&key_str).unwrap();
+            match capt {
+                Some(a) => {
+                    for (key, value) in map.iter() {
+                        println!("'{}' '{}'", &&a[*key], value);
+                        assert_eq!(&&a[*key], value);
+                    }
+                }, 
+                None => panic!("ERROR: String '{}' should have matched 'PATTERN_GLOBAL_VARIABLE', but didn't.", value_str)
+            }
+        }
+    }
+    
+    #[test]
+    fn test_regex_pattern_function_start() {
+        // Test PATTERN_FUNCTION_START.
+        // Construct hashmap containing strings to match.
+        let mut test_strings: HashMap<u32, &str> = HashMap::new();
+        test_strings.insert(0, "def zeros(shape, dtype=None, order='C'):");
+        test_strings.insert(1, "def eye(n,M=None, k=0, dtype=float, order='C'):");
+        test_strings.insert(2, "    def __array_finalize__(self, obj):");
+        test_strings.insert(3, "    def __mul__(self, other):  ");
+        test_strings.insert(4, "    def sum(self, axis=None, dtype=None, out=None):");
+        test_strings.insert(5, "    def prod(self, axis=None, dtype=None, out=None):");
+        test_strings.insert(6, "    def run_case(self, testcase: DataDrivenTestCase) -> None:");
+        test_strings.insert(7, "def columns(self, *cols: ColumnClause[Any], **types: Union[TypeEngine[Any], Type[TypeEngine[Any]]]) -> TextAsFrom: ");
+        test_strings.insert(8, "    def self_group(self: _CL, against: Optional[Any] = ...) -> Union[_CL, Grouping[Any]]:");
+        test_strings.insert(9, "         \t\t\tdef    func   (self, a=[5, 6, \"a\"], b, c, d: List[Tuple[str]]=(5, 6, 7, banaan), _str: bool=False)    ->     List[Tuple[str, int], str]  :   \t\t \t\t    ");
+        
+        // Construct hashmap containing hashmaps containing values of named groups.
+        let mut test_matches: HashMap<u32, HashMap<&str, &str>> = HashMap::new();
+        test_matches.insert(0, HashMap::from([("indentation", ""), ("name", "zeros"), ("params", "shape, dtype=None, order='C'")]));
+        test_matches.insert(1, HashMap::from([("indentation", ""), ("name", "eye"), ("params", "n,M=None, k=0, dtype=float, order='C'")]));
+        test_matches.insert(2, HashMap::from([("indentation", "    "), ("name", "__array_finalize__"), ("params", "self, obj")]));
+        test_matches.insert(3, HashMap::from([("indentation", "    "), ("name", "__mul__"), ("params", "self, other")]));
+        test_matches.insert(4, HashMap::from([("indentation", "    "), ("name", "sum"), ("params", "self, axis=None, dtype=None, out=None")]));
+        test_matches.insert(5, HashMap::from([("indentation", "    "), ("name", "prod"), ("params", "self, axis=None, dtype=None, out=None")]));
+        test_matches.insert(6, HashMap::from([("indentation", "    "), ("name", "run_case"), ("params", "self, testcase: DataDrivenTestCase")]));
+        test_matches.insert(7, HashMap::from([("indentation", ""), ("name", "columns"), ("params", "self, *cols: ColumnClause[Any], **types: Union[TypeEngine[Any], Type[TypeEngine[Any]]]")]));
+        test_matches.insert(8, HashMap::from([("indentation", "    "), ("name", "self_group"), ("params", "self: _CL, against: Optional[Any] = ...")]));
+        test_matches.insert(9, HashMap::from([("indentation", "         \t\t\t"), ("name", "func"), ("params", "self, a=[5, 6, \"a\"], b, c, d: List[Tuple[str]]=(5, 6, 7, banaan), _str: bool=False")]));
+        
+        // Run tests.
+        let re = Regex::new(PATTERN_FUNCTION_START).unwrap();
+        for (key_str, value_str) in test_strings.iter() {
+            let capt = re.captures(value_str);
+            let map = test_matches.get(&key_str).unwrap();
+            match capt {
+                Some(a) => {
+                    for (key, value) in map.iter() {
+                        println!("'{}' '{}'", &&a[*key], value);
+                        assert_eq!(&&a[*key], value);
+                    }
+                }, 
+                None => panic!("ERROR: String '{}' should have matched 'PATTERN_FUNCTION_START', but didn't.", value_str)
+            }
+        }
+    }
+    
+    #[test]
+    fn test_regex_pattern_class_start() {
+        // Test PATTERN_CLASS_START.
+        // Construct hashmap containing strings to match.
+        let mut test_strings: HashMap<u32, &str> = HashMap::new();
+        test_strings.insert(0, "class BindParameter(ColumnElement[_T]):");
+        test_strings.insert(1, "class Triangle:");
+        test_strings.insert(2, "    class Rect(Shape):");
+        test_strings.insert(3, "class ModuleWrapper(nn.Module):");
+        test_strings.insert(4, "class UntypedStorage(torch._C.StorageBase, _StorageBase):");
+        test_strings.insert(5, "                  \t\t\tclass Library:    \t\t  \t\t");
+        test_strings.insert(6, "class SourceChangeWarning(Warning):");
+        test_strings.insert(7, "     \t\t\t\t\t\t            class ETKernelIndex:   ");
+        
+        // Construct hashmap containing hashmaps containing values of named groups.
+        let mut test_matches: HashMap<u32, HashMap<&str, &str>> = HashMap::new();
+        test_matches.insert(0, HashMap::from([("indentation", ""), ("name", "BindParameter"), ("parent", "ColumnElement[_T]")]));
+        test_matches.insert(1, HashMap::from([("indentation", ""), ("name", "Triangle"), ("parent", "")]));
+        test_matches.insert(2, HashMap::from([("indentation", "    "), ("name", "Rect"), ("parent", "Shape")]));
+        test_matches.insert(3, HashMap::from([("indentation", ""), ("name", "ModuleWrapper"), ("parent", "nn.Module")]));
+        test_matches.insert(4, HashMap::from([("indentation", ""), ("name", "UntypedStorage"), ("parent", "torch._C.StorageBase, _StorageBase")]));
+        test_matches.insert(5, HashMap::from([("indentation", "                  \t\t\t"), ("name", "Library"), ("parent", "")]));
+        test_matches.insert(6, HashMap::from([("indentation", ""), ("name", "SourceChangeWarning"), ("parent", "Warning")]));
+        test_matches.insert(7, HashMap::from([("indentation", "     \t\t\t\t\t\t            "), ("name", "ETKernelIndex"), ("parent", "")]));
+        
+        // Run tests.
+        let re = Regex::new(PATTERN_CLASS_START).unwrap();
+        for (key_str, value_str) in test_strings.iter() {
+            let capt = re.captures(value_str);
+            let map = test_matches.get(&key_str).unwrap();
+            match capt {
+                Some(a) => {
+                    for (key, value) in map.iter() {
+                        if key == &"parent" {
+                            assert_eq!(&a.name("parent").map(|m| m.as_str()).unwrap_or(""), value);
+                        } else {
+                            assert_eq!(&&a[*key], value);
+                        }
+                    }
+                }, 
+                None => panic!("ERROR: String '{}' should have matched 'PATTERN_CLASS_START', but didn't.", value_str)
+            }
+        }
+    }
+    
+    #[test]
+    fn test_regex_pattern_class_variable() {
+        // Test PATTERN_CLASS_VARIABLE.
+        // Construct hashmap containing strings to match.
+        let mut test_strings: HashMap<u32, &str> = HashMap::new();
+        test_strings.insert(0, "    arg_meta: Tuple[ETKernelKeyOpArgMeta, ...] = ()");
+        test_strings.insert(1, "    default: bool = False");
+        test_strings.insert(2, "    version: int = KERNEL_KEY_VERSION");
+        test_strings.insert(3, "        CLASS_VAR   =     5");
+        test_strings.insert(4, "    instructions = 1");
+        test_strings.insert(5, "    MAXDIM = 21201");
+        test_strings.insert(6, "        CLASS_STR   = \t\t\t\t  \"Bananas are very                  spacyyyyyyyyy\"    ");
+        test_strings.insert(7, "    deserialized_objects = {}");
+        
+        // Construct hashmap containing the indentations for each string to replace in the regex.
+        let mut test_string_indentations: HashMap<u32, u32> = HashMap::new();
+        test_string_indentations.insert(0, 4);
+        test_string_indentations.insert(1, 4);
+        test_string_indentations.insert(2, 4);
+        test_string_indentations.insert(3, 8);
+        test_string_indentations.insert(4, 4);
+        test_string_indentations.insert(5, 4);
+        test_string_indentations.insert(6, 8);
+        test_string_indentations.insert(7, 4);
+        
+        // Construct hashmap containing hashmaps containing values of named groups.
+        let mut test_matches: HashMap<u32, HashMap<&str, &str>> = HashMap::new();
+        test_matches.insert(0, HashMap::from([("varname", "arg_meta"), ("varvalue", "()")]));
+        test_matches.insert(1, HashMap::from([("varname", "default"), ("varvalue", "False")]));
+        test_matches.insert(2, HashMap::from([("varname", "version"), ("varvalue", "KERNEL_KEY_VERSION")]));
+        test_matches.insert(3, HashMap::from([("varname", "CLASS_VAR"), ("varvalue", "5")]));
+        test_matches.insert(4, HashMap::from([("varname", "instructions"), ("varvalue", "1")]));
+        test_matches.insert(5, HashMap::from([("varname", "MAXDIM"), ("varvalue", "21201")]));
+        test_matches.insert(6, HashMap::from([("varname", "CLASS_STR"), ("varvalue", "\"Bananas are very                  spacyyyyyyyyy\"    ")]));
+        test_matches.insert(7, HashMap::from([("varname", "deserialized_objects"), ("varvalue", "{}")]));
+        
+        // Run tests.
+        for (key_str, value_str) in test_strings.iter() {
+            let num_spaces = test_string_indentations.get(&key_str).unwrap();
+            let re = Regex::new(PATTERN_CLASS_VARIABLE.replace("INDENTATION", format!("{}", num_spaces).as_str()).as_str()).unwrap();
+            let capt = re.captures(value_str);
+            let map = test_matches.get(&key_str).unwrap();
+            match capt {
+                Some(a) => {
+                    for (key, value) in map.iter() {
+                        assert_eq!(&&a[*key], value);
+                    }
+                }, 
+                None => panic!("ERROR: String '{}' should have matched 'PATTERN_CLASS_VARIABLE', but didn't.", value_str)
+            }
+        }
+    }
     
     #[test]
     fn test_create_line() {
