@@ -79,3 +79,6 @@ I have implemented the Assignment struct today and changed the type of class var
 
 22.53<br />
 I have reimplemented the Class::get_source() method, it now reconstructs the source from the functions, classes, and variables inside the class.
+
+23.16<br />
+Renamed every Struct::create() method to Struct::new().

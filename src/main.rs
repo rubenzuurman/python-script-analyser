@@ -27,7 +27,7 @@ fn main() {
     
     // TODO: Do one pass over lines to check for indentation inconsistencies.
     
-    let file: File = File::create(filename, &vec_str_to_vec_line(&lines));
+    let file: File = File::new(filename, &vec_str_to_vec_line(&lines));
     
     // Print file data.
     println!("Imports: {:?}", file.get_imports());

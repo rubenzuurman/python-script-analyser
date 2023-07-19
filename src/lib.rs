@@ -21,7 +21,7 @@ pub struct Line {
 
 impl Line {
     
-    pub fn create(number: usize, text: &str) -> Self {
+    pub fn new(number: usize, text: &str) -> Self {
         return Line {
             number: number, 
             text: text.to_string()
@@ -209,7 +209,7 @@ pub struct StructureTracker {
 
 impl StructureTracker {
     
-    pub fn create() -> Self {
+    pub fn new() -> Self {
         return StructureTracker {
             active: false, 
             indentation_length: 0, 
@@ -267,7 +267,7 @@ pub struct File {
 
 impl File {
     
-    pub fn create(filename: &str, source: &Vec<Line>) -> Self {
+    pub fn new(filename: &str, source: &Vec<Line>) -> Self {
         // Get filename from path.
         let path = Path::new(filename);
         let name: &OsStr = path.file_stem().unwrap();
@@ -279,8 +279,8 @@ impl File {
         }
         
         // Initialize structure tracker (used for tracking functions and classes).
-        let mut function_tracker: StructureTracker = StructureTracker::create();
-        let mut class_tracker: StructureTracker = StructureTracker::create();
+        let mut function_tracker: StructureTracker = StructureTracker::new();
+        let mut class_tracker: StructureTracker = StructureTracker::new();
         
         // Iterate over lines and detect things.
         let mut imports: Vec<String> = Vec::new();
@@ -307,7 +307,7 @@ impl File {
                         function_tracker.add_line(&line);
                     } else {
                         // End of function, create and push function.
-                        let function: Function = Function::create(function_tracker.get_source());
+                        let function: Function = Function::new(function_tracker.get_source());
                         functions.push(function);
                         // Reset tracker.
                         function_tracker.reset();
@@ -326,7 +326,7 @@ impl File {
                         class_tracker.add_line(&line);
                     } else {
                         // End of class, create and push class.
-                        let class: Class = Class::create(class_tracker.get_source());
+                        let class: Class = Class::new(class_tracker.get_source());
                         classes.push(class);
                         // Reset tracker.
                         class_tracker.reset();
@@ -380,12 +380,12 @@ impl File {
         // Check if the function tracker or class tracker is still active.
         if function_tracker.is_active() {
             // End of function, create and push function.
-            let function: Function = Function::create(function_tracker.get_source());
+            let function: Function = Function::new(function_tracker.get_source());
             functions.push(function);
         }
         if class_tracker.is_active() {
             // End of class, create and push function.
-            let class: Class = Class::create(class_tracker.get_source());
+            let class: Class = Class::new(class_tracker.get_source());
             classes.push(class);
         }
         
@@ -539,7 +539,7 @@ pub struct Function {
 
 impl Function {
     
-    pub fn create(source: &Vec<Line>) -> Self {
+    pub fn new(source: &Vec<Line>) -> Self {
         // Get first line of the source.
         let first_line: &str = source.get(0).unwrap().get_text();
         
@@ -608,7 +608,7 @@ pub struct Class {
 
 impl Class {
     
-    pub fn create(source: &Vec<Line>) -> Self {
+    pub fn new(source: &Vec<Line>) -> Self {
         // Get clone of source.
         let mut source: Vec<Line> = source.clone();
         
@@ -666,8 +666,8 @@ impl Class {
         }
         
         // Initialize structure tracker (used for tracking methods).
-        let mut method_tracker: StructureTracker = StructureTracker::create();
-        let mut class_tracker: StructureTracker = StructureTracker::create();
+        let mut method_tracker: StructureTracker = StructureTracker::new();
+        let mut class_tracker: StructureTracker = StructureTracker::new();
         
         // Initialize methods vector.
         let mut methods: Vec<ClassMethod> = Vec::new();
@@ -698,7 +698,7 @@ impl Class {
                         method_tracker.add_line(&line);
                     } else {
                         // End of method, create and push method.
-                        let method: ClassMethod = ClassMethod::create(method_tracker.get_source());
+                        let method: ClassMethod = ClassMethod::new(method_tracker.get_source());
                         println!("Adding classmethod with name '{}' to class '{}'.", &method.get_name(), name);
                         methods.push(method);
                         
@@ -719,7 +719,7 @@ impl Class {
                         class_tracker.add_line(&line);
                     } else {
                         // End of class, create and push class.
-                        let class: Class = Class::create(class_tracker.get_source());
+                        let class: Class = Class::new(class_tracker.get_source());
                         println!("Adding class with name '{}' to class '{}'.", &class.get_name(), name);
                         classes.push(class);
                         
@@ -762,13 +762,13 @@ impl Class {
         // Check if a method or class was getting collected when the source ended.
         if method_tracker.is_active() {
             // Create classmethod object and add to methods vector.
-            let method: ClassMethod = ClassMethod::create(method_tracker.get_source());
+            let method: ClassMethod = ClassMethod::new(method_tracker.get_source());
             println!("Adding classmethod with name '{}' to class '{}'.", &method.get_name(), name);
             methods.push(method);
         }
         if class_tracker.is_active() {
             // Create class object and add to classes vector.
-            let class: Class = Class::create(class_tracker.get_source());
+            let class: Class = Class::new(class_tracker.get_source());
             println!("Adding class with name '{}' to class '{}'.", &class.get_name(), name);
             classes.push(class);
         }
@@ -835,7 +835,7 @@ impl Class {
         }
         
         // Add dummy line to the start of the vector representing the class definition.
-        let class_definition: Line = Line::create(lines.get(0).unwrap().get_number() - 1, format!("{}class {}({}): [FABICATED LINE]", indentation_str, self.get_name(), self.get_parent()).as_str());
+        let class_definition: Line = Line::new(lines.get(0).unwrap().get_number() - 1, format!("{}class {}({}): [FABICATED LINE]", indentation_str, self.get_name(), self.get_parent()).as_str());
         lines.reverse();
         lines.push(class_definition);
         lines.reverse();
@@ -866,7 +866,7 @@ pub struct ClassMethod {
 
 impl ClassMethod {
     
-    fn create(source: &Vec<Line>) -> Self {
+    fn new(source: &Vec<Line>) -> Self {
         // Get first line.
         let first_line: &str = source.get(0).unwrap().get_text();
         
@@ -967,7 +967,7 @@ pub fn get_lines_for_test(filename: &str) -> Vec<String> {
 pub fn vec_str_to_vec_line(source: &Vec<String>) -> Vec<Line> {
     let mut lines: Vec<Line> = Vec::new();
     for (index, text) in source.iter().enumerate() {
-        lines.push(Line::create(index + 1, text));
+        lines.push(Line::new(index + 1, text));
     }
     return lines;
 }
@@ -1319,7 +1319,7 @@ mod tests {
             !_(*)`~|\\[]{};:'\",.<>/?!@#$%^&*()_+-=說文閩音通한국어 키보드乇乂ㄒ尺卂　ㄒ卄丨匚匚Моя семья"), (1000000000, "Big line number")];
         
         for (line_number, text) in test_cases {
-            let line = Line::create(line_number, text);
+            let line = Line::new(line_number, text);
             let line_want = Line {number: line_number, text: text.to_string()};
             assert_eq!(line, line_want);
         }
@@ -1328,31 +1328,31 @@ mod tests {
     #[test]
     fn test_line_is_assignment() {
         let test_lines: Vec<Line> = vec![
-            Line::create( 1, "var = 1"), 
-            Line::create(56, "variable: int = \"This is an = sign\""), 
-            Line::create(34, "if glob == 5:"), 
-            Line::create(69, "if blob >= \"False != True = = = \""), 
-            Line::create(25, "qwerty <= [var = 5]"), 
-            Line::create(62, "not_equal = var != 5"), 
-            Line::create(43, "except ImportError:"), 
-            Line::create(18, "    import numpy.core._internal as nic"), 
-            Line::create(28, "        >>> lib = ctypes.cdll[<full_path_name>] # doctest: +SKIP"), 
-            Line::create(28, "                base_ext = \".dylib\""), 
-            Line::create(35, "            libname_ext = [libname + base_ext]"), 
-            Line::create(28, "                libname_ext.insert(0, libname + so_ext)"), 
-            Line::create(81, "            libname_ext = [libname]"), 
-            Line::create(40, "            libdir = os.path.dirname(loader_path)"), 
-            Line::create(43, "def _num_fromflags(flaglist):"), 
-            Line::create(85, "def ndpointer(dtype=None, ndim=None, shape=None, flags=None):"), 
-            Line::create(95, "    num = None"), 
-            Line::create(53, "            shape = (shape,)"), 
-            Line::create(73, "    if ndim is not None:"), 
-            Line::create(92, "        name += \"_\"+\"x\".join(str(x) for x in shape)"), 
-            Line::create(48, "    _pointer_type_cache[cache_key] = klass"), 
-            Line::create( 4, "        dtype_native = dtype.newbyteorder('=')"), 
-            Line::create(52, "var = [g=5, t=6]"), 
-            Line::create(83, "d = {\"a\": g==5, \"b\": t=7}"), 
-            Line::create(78, "tup   = (b=5, c=7, v==10)"), 
+            Line::new( 1, "var = 1"), 
+            Line::new(56, "variable: int = \"This is an = sign\""), 
+            Line::new(34, "if glob == 5:"), 
+            Line::new(69, "if blob >= \"False != True = = = \""), 
+            Line::new(25, "qwerty <= [var = 5]"), 
+            Line::new(62, "not_equal = var != 5"), 
+            Line::new(43, "except ImportError:"), 
+            Line::new(18, "    import numpy.core._internal as nic"), 
+            Line::new(28, "        >>> lib = ctypes.cdll[<full_path_name>] # doctest: +SKIP"), 
+            Line::new(28, "                base_ext = \".dylib\""), 
+            Line::new(35, "            libname_ext = [libname + base_ext]"), 
+            Line::new(28, "                libname_ext.insert(0, libname + so_ext)"), 
+            Line::new(81, "            libname_ext = [libname]"), 
+            Line::new(40, "            libdir = os.path.dirname(loader_path)"), 
+            Line::new(43, "def _num_fromflags(flaglist):"), 
+            Line::new(85, "def ndpointer(dtype=None, ndim=None, shape=None, flags=None):"), 
+            Line::new(95, "    num = None"), 
+            Line::new(53, "            shape = (shape,)"), 
+            Line::new(73, "    if ndim is not None:"), 
+            Line::new(92, "        name += \"_\"+\"x\".join(str(x) for x in shape)"), 
+            Line::new(48, "    _pointer_type_cache[cache_key] = klass"), 
+            Line::new( 4, "        dtype_native = dtype.newbyteorder('=')"), 
+            Line::new(52, "var = [g=5, t=6]"), 
+            Line::new(83, "d = {\"a\": g==5, \"b\": t=7}"), 
+            Line::new(78, "tup   = (b=5, c=7, v==10)"), 
         ];
         
         let test_results: Vec<Option<usize>> = vec![
@@ -1392,16 +1392,16 @@ mod tests {
     #[test]
     fn test_create_assignment() {
         let test_lines: Vec<Line> = vec![
-            Line::create(15, "                self.banana = banana"), 
-            Line::create(72, "            LOWER_GLOB = \"LowerClass class variable\""), 
-            Line::create(63, "    class SubRect(object):"), 
-            Line::create(43, "    class_var1 = 5"), 
-            Line::create(90, "        print(\"Yes init\")"), 
-            Line::create(26, "            self.gc_collected += info[\"collected\"]"), 
-            Line::create(12, "            self.gc_collected = info[\"collected\"]"), 
-            Line::create(83, "    def gc_callback(self, phase: str, info: Mapping[str, int]) -> None:"), 
-            Line::create(13, "torch.repeat_interleave(x, dim=2, repeats=n_rep)"), 
-            Line::create(76, "a = torch.repeat_interleave(x, dim=2, repeats=n_rep)"), 
+            Line::new(15, "                self.banana = banana"), 
+            Line::new(72, "            LOWER_GLOB = \"LowerClass class variable\""), 
+            Line::new(63, "    class SubRect(object):"), 
+            Line::new(43, "    class_var1 = 5"), 
+            Line::new(90, "        print(\"Yes init\")"), 
+            Line::new(26, "            self.gc_collected += info[\"collected\"]"), 
+            Line::new(12, "            self.gc_collected = info[\"collected\"]"), 
+            Line::new(83, "    def gc_callback(self, phase: str, info: Mapping[str, int]) -> None:"), 
+            Line::new(13, "torch.repeat_interleave(x, dim=2, repeats=n_rep)"), 
+            Line::new(76, "a = torch.repeat_interleave(x, dim=2, repeats=n_rep)"), 
         ];
         
         let test_results: Vec<Option<Assignment>> = vec![
@@ -1427,7 +1427,7 @@ mod tests {
     fn test_create_function() {
         let lines_str: Vec<String> = get_lines_for_test("test/create_function.py");
         let lines: Vec<Line> = vec_str_to_vec_line(&lines_str);
-        let func: Function = Function::create(&lines);
+        let func: Function = Function::new(&lines);
         
         let func_name_want: String = String::from("func_name");
         let func_params_want: Vec<String> = vec!["param1".to_string(), "param2".to_string(), "param3=5".to_string(), "*args".to_string(), "**kwargs".to_string()];
@@ -1439,7 +1439,7 @@ mod tests {
     fn test_create_class() {
         let lines_str: Vec<String> = get_lines_for_test("test/create_class.py");
         let lines: Vec<Line> = vec_str_to_vec_line(&lines_str);
-        let class: Class = Class::create(&lines);
+        let class: Class = Class::new(&lines);
         
         let class_name_want: String = String::from("Rect");
         let class_parent_want: String = String::from("Shape");
@@ -1449,7 +1449,7 @@ mod tests {
             Assignment::new(lines.get(9).unwrap()).unwrap(), 
             Assignment::new(lines.get(15).unwrap()).unwrap()
         ];
-        let class_methods_want: Vec<ClassMethod> = vec![ClassMethod::create(&lines[4..=6].to_vec()), ClassMethod::create(&lines[11..=13].to_vec())];
+        let class_methods_want: Vec<ClassMethod> = vec![ClassMethod::new(&lines[4..=6].to_vec()), ClassMethod::new(&lines[11..=13].to_vec())];
         let class_classes_want: Vec<Class> = vec![];
         let class_want: Class = Class {name: class_name_want, parent: class_parent_want, variables: class_variables_want, methods: class_methods_want, classes: class_classes_want};
         
@@ -1460,7 +1460,7 @@ mod tests {
     fn test_create_classmethod() {
         let lines_str: Vec<String> = get_lines_for_test("test/create_classmethod.py");
         let lines: Vec<Line> = vec_str_to_vec_line(&lines_str);
-        let classmethod: ClassMethod = ClassMethod::create(&lines);
+        let classmethod: ClassMethod = ClassMethod::new(&lines);
         
         let classmethod_name_want: String = String::from("class_method");
         let classmethod_params_want: Vec<String> = vec!["self".to_string(), "a".to_string(), "b=10".to_string(), "c=5".to_string(), 
@@ -1474,7 +1474,7 @@ mod tests {
     fn test_function_at_end_of_file_no_newline() {
         let lines_str: Vec<String> = get_lines_for_test("test/function_at_end_of_file_no_newline.py");
         let lines: Vec<Line> = vec_str_to_vec_line(&lines_str);
-        let function: Function = Function::create(&lines);
+        let function: Function = Function::new(&lines);
         
         let function_name_want: String = "function".to_string();
         let function_parameters_want: Vec<String> = vec!["param1".to_string(), "param2=5".to_string()];
@@ -1500,17 +1500,17 @@ mod tests {
                         name: "random_function".to_string(), 
                         parameters: vec!["param1".to_string(), "p2".to_string(), "p3".to_string(), "p4".to_string(), "p5=3".to_string()], 
                         source: vec![
-                            Line::create(13, "def random_function(param1, p2, p3, p4, p5=3):"),
-                            Line::create(14, "    print(\"hihi\")"),
-                            Line::create(15, "    for i in range(10):"),
-                            Line::create(16, "        if i % 2 == 0:"),
-                            Line::create(17, "            print(f\"number {i}\")"),
-                            Line::create(18, "            if i % 3 == 0:"),
-                            Line::create(19, "                print(\"Divisible by 6!\")"),
-                            Line::create(20, "        else:"),
-                            Line::create(21, "            print(\"Do nothing\")"),
-                            Line::create(22, "            continue"),
-                            Line::create(24, "    print(\"End of function\")")
+                            Line::new(13, "def random_function(param1, p2, p3, p4, p5=3):"),
+                            Line::new(14, "    print(\"hihi\")"),
+                            Line::new(15, "    for i in range(10):"),
+                            Line::new(16, "        if i % 2 == 0:"),
+                            Line::new(17, "            print(f\"number {i}\")"),
+                            Line::new(18, "            if i % 3 == 0:"),
+                            Line::new(19, "                print(\"Divisible by 6!\")"),
+                            Line::new(20, "        else:"),
+                            Line::new(21, "            print(\"Do nothing\")"),
+                            Line::new(22, "            continue"),
+                            Line::new(24, "    print(\"End of function\")")
                         ]
                     }
                 ], // end of functions
@@ -1524,58 +1524,58 @@ mod tests {
                                 name: "__enter__".to_string(), 
                                 parameters: vec!["self".to_string()], 
                                 source: vec![
-                                     Line::create(29, "    def __enter__(self) -> GcLogger:"),
-                                    Line::create(30, "        self.gc_start_time: float | None = None"),
-                                    Line::create(31, "        self.gc_time = 0.0"),
-                                    Line::create(32, "        self.gc_calls = 0"),
-                                    Line::create(33, "        self.gc_collected = 0"),
-                                    Line::create(34, "        self.gc_uncollectable = 0"),
-                                    Line::create(35, "        gc.callbacks.append(self.gc_callback)"),
-                                    Line::create(36, "        self.start_time = time.time()"),
-                                    Line::create(37, "        return self")
+                                    Line::new(29, "    def __enter__(self) -> GcLogger:"),
+                                    Line::new(30, "        self.gc_start_time: float | None = None"),
+                                    Line::new(31, "        self.gc_time = 0.0"),
+                                    Line::new(32, "        self.gc_calls = 0"),
+                                    Line::new(33, "        self.gc_collected = 0"),
+                                    Line::new(34, "        self.gc_uncollectable = 0"),
+                                    Line::new(35, "        gc.callbacks.append(self.gc_callback)"),
+                                    Line::new(36, "        self.start_time = time.time()"),
+                                    Line::new(37, "        return self")
                                 ]
                             }, 
                             ClassMethod {
                                 name: "gc_callback".to_string(), 
                                 parameters: vec!["self".to_string(), "phase: str".to_string(), "info: Mapping[str, int]".to_string()], 
                                 source: vec![
-                                    Line::create(39, "    def gc_callback(self, phase: str, info: Mapping[str, int]) -> None:"),
-                                    Line::create(40, "        if phase == \"start\":"),
-                                    Line::create(41, "            assert self.gc_start_time is None, \"Start phase out of sequence\""),
-                                    Line::create(42, "            self.gc_start_time = time.time()"),
-                                    Line::create(43, "        elif phase == \"stop\":"),
-                                    Line::create(44, "            assert self.gc_start_time is not None, \"Stop phase out of sequence\""),
-                                    Line::create(45, "            self.gc_calls += 1"),
-                                    Line::create(46, "            self.gc_time += time.time() - self.gc_start_time"),
-                                    Line::create(47, "            self.gc_start_time = None"),
-                                    Line::create(48, "            self.gc_collected += info[\"collected\"]"),
-                                    Line::create(49, "            self.gc_uncollectable += info[\"uncollectable\"]"),
-                                    Line::create(50, "        else:"),
-                                    Line::create(51, "            assert False, f\"Unrecognized gc phase ({phase!r})\"")
+                                    Line::new(39, "    def gc_callback(self, phase: str, info: Mapping[str, int]) -> None:"),
+                                    Line::new(40, "        if phase == \"start\":"),
+                                    Line::new(41, "            assert self.gc_start_time is None, \"Start phase out of sequence\""),
+                                    Line::new(42, "            self.gc_start_time = time.time()"),
+                                    Line::new(43, "        elif phase == \"stop\":"),
+                                    Line::new(44, "            assert self.gc_start_time is not None, \"Stop phase out of sequence\""),
+                                    Line::new(45, "            self.gc_calls += 1"),
+                                    Line::new(46, "            self.gc_time += time.time() - self.gc_start_time"),
+                                    Line::new(47, "            self.gc_start_time = None"),
+                                    Line::new(48, "            self.gc_collected += info[\"collected\"]"),
+                                    Line::new(49, "            self.gc_uncollectable += info[\"uncollectable\"]"),
+                                    Line::new(50, "        else:"),
+                                    Line::new(51, "            assert False, f\"Unrecognized gc phase ({phase!r})\"")
                                 ]
                             }, 
                             ClassMethod {
                                 name: "__exit__".to_string(), 
                                 parameters: vec!["self".to_string(), "*args: object".to_string()], 
                                 source: vec![
-                                        Line::create(53, "    def __exit__(self, *args: object) -> None:"),
-                                        Line::create(54, "        while self.gc_callback in gc.callbacks:"),
-                                        Line::create(55, "            gc.callbacks.remove(self.gc_callback)")
+                                        Line::new(53, "    def __exit__(self, *args: object) -> None:"),
+                                        Line::new(54, "        while self.gc_callback in gc.callbacks:"),
+                                        Line::new(55, "            gc.callbacks.remove(self.gc_callback)")
                                 ]
                             }, 
                             ClassMethod {
                                 name: "get_stats".to_string(), 
                                 parameters: vec!["self".to_string()], 
                                 source: vec![
-                                        Line::create(57, "    def get_stats(self) -> Mapping[str, float]:"),
-                                        Line::create(58, "        end_time = time.time()"),
-                                        Line::create(59, "        result = {}"),
-                                        Line::create(60, "        result[\"gc_time\"] = self.gc_time"),
-                                        Line::create(61, "        result[\"gc_calls\"] = self.gc_calls"),
-                                        Line::create(62, "        result[\"gc_collected\"] = self.gc_collected"),
-                                        Line::create(63, "        result[\"gc_uncollectable\"] = self.gc_uncollectable"),
-                                        Line::create(64, "        result[\"build_time\"] = end_time - self.start_time"),
-                                        Line::create(65, "        return result")
+                                        Line::new(57, "    def get_stats(self) -> Mapping[str, float]:"),
+                                        Line::new(58, "        end_time = time.time()"),
+                                        Line::new(59, "        result = {}"),
+                                        Line::new(60, "        result[\"gc_time\"] = self.gc_time"),
+                                        Line::new(61, "        result[\"gc_calls\"] = self.gc_calls"),
+                                        Line::new(62, "        result[\"gc_collected\"] = self.gc_collected"),
+                                        Line::new(63, "        result[\"gc_uncollectable\"] = self.gc_uncollectable"),
+                                        Line::new(64, "        result[\"build_time\"] = end_time - self.start_time"),
+                                        Line::new(65, "        return result")
                                 ]
                             }
                         ], 
@@ -1592,8 +1592,8 @@ mod tests {
                         name: "main".to_string(), 
                         parameters: vec![], 
                         source: vec![
-                            Line::create(40, "def main():"), 
-                            Line::create(41, "    upper = UpperClass(5, 6)")
+                            Line::new(40, "def main():"), 
+                            Line::new(41, "    upper = UpperClass(5, 6)")
                         ]
                     }
                 ], // end of functions
@@ -1602,27 +1602,27 @@ mod tests {
                         name: "UpperClass".to_string(), 
                         parent: "object".to_string(), 
                         variables: vec![
-                            Assignment::new(&Line::create(6, "    BANANA = \"Banana\"")).unwrap()
+                            Assignment::new(&Line::new(6, "    BANANA = \"Banana\"")).unwrap()
                         ], 
                         methods: vec![
                             ClassMethod {
                                 name: "__init__".to_string(), 
                                 parameters: vec!["self".to_string(), "a".to_string(), "b".to_string()], 
                                 source: vec![
-                                    Line::create(29, "    def __init__(self, a, b):"),
-                                    Line::create(30, "        def define_c():"),
-                                    Line::create(31, "            self.c = 5"),
-                                    Line::create(33, "        define_c()"),
-                                    Line::create(34, "        self.a = [a, b, self.c + 1]"),
-                                    Line::create(35, "        self.b = 56"),
+                                    Line::new(29, "    def __init__(self, a, b):"),
+                                    Line::new(30, "        def define_c():"),
+                                    Line::new(31, "            self.c = 5"),
+                                    Line::new(33, "        define_c()"),
+                                    Line::new(34, "        self.a = [a, b, self.c + 1]"),
+                                    Line::new(35, "        self.b = 56"),
                                 ]
                             }, 
                             ClassMethod {
                                 name: "print".to_string(), 
                                 parameters: vec!["self".to_string()], 
                                 source: vec![
-                                    Line::create(37, "    def print(self):"), 
-                                    Line::create(38, "        print(self.a, self.b, self.c)")
+                                    Line::new(37, "    def print(self):"), 
+                                    Line::new(38, "        print(self.a, self.b, self.c)")
                                 ]
                             }
                         ], 
@@ -1636,17 +1636,17 @@ mod tests {
                                         name: "__init__".to_string(), 
                                         parameters: vec!["self".to_string()], 
                                         source: vec![
-                                            Line::create(9, "        def __init__(self):"), 
-                                            Line::create(10, "            self.width = 5"), 
-                                            Line::create(11, "            self.height = 10"), 
+                                            Line::new(9, "        def __init__(self):"), 
+                                            Line::new(10, "            self.width = 5"), 
+                                            Line::new(11, "            self.height = 10"), 
                                         ]
                                     }, 
                                     ClassMethod {
                                         name: "get_width".to_string(), 
                                         parameters: vec!["self".to_string(), "pineapple=25".to_string()], 
                                         source: vec![
-                                            Line::create(26, "        def get_width(self, pineapple=25):"),
-                                            Line::create(27, "            return self.width")
+                                            Line::new(26, "        def get_width(self, pineapple=25):"),
+                                            Line::new(27, "            return self.width")
                                         ]
                                     }
                                 ], 
@@ -1655,26 +1655,26 @@ mod tests {
                                         name: "LowerClass".to_string(), 
                                         parent: "Shape, Banana".to_string(), 
                                         variables: vec![
-                                            Assignment::new(&Line::create(15, "            LOWER_GLOB = \"LowerClass class variable\"")).unwrap(), 
-                                            Assignment::new(&Line::create(16, "            SOME_OTHER_THING = \"Apple\"")).unwrap(), 
+                                            Assignment::new(&Line::new(15, "            LOWER_GLOB = \"LowerClass class variable\"")).unwrap(), 
+                                            Assignment::new(&Line::new(16, "            SOME_OTHER_THING = \"Apple\"")).unwrap(), 
                                         ], 
                                         methods: vec![
                                             ClassMethod {
                                                 name: "__init__".to_string(), 
                                                 parameters: vec!["self".to_string(), "banana".to_string(), "apple".to_string()], 
                                                 source: vec![
-                                                    Line::create(18, "            def __init__(self, banana, apple):"),
-                                                    Line::create(19, "                self.banana = banana"),
-                                                    Line::create(20, "                self.apple = apple"),
-                                                    Line::create(21, "                self.mango = (banana * apple) / math.sqrt(2)"),
+                                                    Line::new(18, "            def __init__(self, banana, apple):"),
+                                                    Line::new(19, "                self.banana = banana"),
+                                                    Line::new(20, "                self.apple = apple"),
+                                                    Line::new(21, "                self.mango = (banana * apple) / math.sqrt(2)"),
                                                 ]
                                             }, 
                                             ClassMethod {
                                                 name: "pear".to_string(), 
                                                 parameters: vec!["self".to_string(), "orange".to_string()], 
                                                 source: vec![
-                                                    Line::create(23, "            def pear(self, orange):"), 
-                                                    Line::create(24, "                return self.apple * self.banana * orange")
+                                                    Line::new(23, "            def pear(self, orange):"), 
+                                                    Line::new(24, "                return self.apple * self.banana * orange")
                                                 ]
                                             }
                                         ], 
@@ -1693,7 +1693,7 @@ mod tests {
             // Create file object from filename.
             let lines_str: Vec<String> = get_lines_for_test(filename);
             let lines: Vec<Line> = vec_str_to_vec_line(&lines_str);
-            let file: File = File::create(filename, &lines);
+            let file: File = File::new(filename, &lines);
             
             // Compare file object to expected file object.
             assert_eq!(file, expected_file);
