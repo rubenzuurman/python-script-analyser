@@ -16,6 +16,12 @@ from j import k aas, baas as p oop, f ish as dog, clo se as you tube
 
 class Rect:
     
+    class SubRect(object):
+        
+        def __init__(self, a, b):
+            self.a = a
+            self.b = b
+    
     class_var1 = 5
     class_var2 = 6
     

@@ -2,7 +2,6 @@ use std::fs;
 use std::io;
 use std::path::Path;
 use std::ffi::OsStr;
-use std::collections::HashMap;
 
 use regex::Regex;
 
@@ -37,6 +36,66 @@ impl Line {
         return &self.text;
     }
     
+    pub fn is_assignment(&self) -> Option<usize> {
+        /*
+        A line is an assignment if it contains exactly one equal sign (not preceded by a less than sign, greater than sign, exclamation mark, plus sign, or minus sign) which is not enclosed by any of the following:
+            Single quotations
+            Double quotations
+            Normal brackets
+            Square brackets
+            Curly brackets
+        */
+        let mut in_quotations: bool = false;
+        let mut in_double_quotations: bool = false;
+        let mut in_brackets_depth: u32 = 0;
+        let mut in_square_brackets_depth: u32 = 0;
+        let mut in_curly_brackets_depth: u32 = 0;
+        
+        let mut first_half: bool = true;
+        let mut equals_index: usize = 0;
+        for (index, c) in self.get_text().chars().enumerate() {
+            match c {
+                '\'' => in_quotations = !in_quotations,
+                '\"' => in_double_quotations = !in_double_quotations,
+                '(' => in_brackets_depth += 1,
+                ')' => in_brackets_depth -= 1,
+                '[' => in_square_brackets_depth += 1,
+                ']' => in_square_brackets_depth -= 1,
+                '{' => in_curly_brackets_depth += 1,
+                '}' => in_curly_brackets_depth -= 1,
+                '=' => {
+                    // Check if this is the first character, in which case this is not an assignment.
+                    if index == 0 {
+                        return None;
+                    }
+                    
+                    // Check if the previous character was not '>', '<', '!', '+', or '-'.
+                    let prev_char: char = self.get_text().chars().nth(index - 1).unwrap();
+                    if prev_char == '>' || prev_char == '<' || prev_char == '!' || prev_char == '+' || prev_char == '-' {
+                        continue;
+                    }
+                    
+                    // Check if not in quotations or brackets.
+                    if !(in_quotations || in_double_quotations || in_brackets_depth > 0 || in_square_brackets_depth > 0 || in_curly_brackets_depth > 0) {
+                        if first_half {
+                            // First equals sign, could be an assignment.
+                            first_half = false;
+                            equals_index = index;
+                        } else {
+                            // Second equals sign, is definitely not an assignment.
+                            return None;
+                        }
+                    }
+                }, 
+                _ => ()
+            }
+        }
+        match first_half {
+            true =>  return None, 
+            false => return Some(equals_index), 
+        }
+    }
+    
 }
 
 impl std::fmt::Display for Line {
@@ -60,6 +119,83 @@ impl PartialEq for Line {
     
     fn eq(&self, other: &Self) -> bool {
         return self.number == other.number && self.text == other.text;
+    }
+    
+}
+
+#[derive(Debug)]
+pub struct Assignment {
+    
+    name: String, 
+    value: String, 
+    source: Line
+    
+}
+
+impl Assignment {
+    
+    pub fn new(line: &Line) -> Option<Self> {
+        // This function checks if the line contains an assignment. If it does, it results Some(Assignment), else it returns None. This Option<T> can then be matched by the caller.
+        match line.is_assignment() {
+            // Return none if the line does not contain an assignment.
+            None => return None, 
+            // Return some if the line does contain an assignment.
+            Some(equals_index) => {
+                // Split line text at index.
+                let var: &str = &line.get_text().as_str()[..equals_index];
+                let val: &str = &line.get_text().as_str()[equals_index+1..];
+                
+                // Check if the variable name contains a type hint.
+                if var.contains(":") {
+                    // Get index of the first ':'.
+                    let mut index: usize = 0;
+                    let colon_index = loop {
+                        if var.chars().nth(index).unwrap() == ':' {
+                            break index;
+                        }
+                        index += 1;
+                    };
+                    
+                    // Extract variable name from variable name with type hint.
+                    let name_type: (&str, &str) = var.split_at(colon_index);
+                    let name: &str = name_type.0;
+                    
+                    return Some(Assignment {
+                        name: name.trim().to_string(), 
+                        value: val.trim().to_string(), 
+                        source: line.clone()
+                    });
+                } else {
+                    return Some(Assignment {
+                        name: var.trim().to_string(), 
+                        value: val.trim().to_string(), 
+                        source: line.clone()
+                    });
+                }
+            }
+        }
+    }
+    
+    pub fn get_name(&self) -> &String {
+        return &self.name;
+    }
+    
+    pub fn get_value(&self) -> &String {
+        return &self.value;
+    }
+    
+    pub fn get_source(&self) -> &Line {
+        return &self.source;
+    }
+    
+}
+
+impl PartialEq for Assignment {
+    
+    fn eq(&self, other: &Self) -> bool {
+        return self.get_name() == other.get_name() 
+            && self.get_value() == other.get_value() 
+            && self.get_source() == other.get_source();
     }
     
 }
@@ -423,7 +559,10 @@ impl Function {
                 for param in a["params"].split(",") {
                     //println!("Param: '{}', nospace: '{}'", param, String::from(re_replace_space.replace_all(param.trim(), " ")));
                     // TODO: This is where you need to fix a bug where '  p5=3  ' is changed to 'p5=3', but '   p5   =   3   ' is changed to 'p5 = 3'.
-                    parameters.push(String::from(re_replace_space.replace_all(param.trim(), " ")));
+                    let param_trim_replace = String::from(re_replace_space.replace_all(param.trim(), " "));
+                    if !param_trim_replace.is_empty() {
+                        parameters.push(param_trim_replace);
+                    }
                 }
             }, 
             None => {
@@ -462,9 +601,9 @@ impl Function {
 pub struct Class {
     name: String, 
     parent: String, 
-    variables: Vec<String>, 
+    variables: Vec<Assignment>, 
     methods: Vec<ClassMethod>, // Methods in the class.
-    source: Vec<Line>, 
+    classes: Vec<Class>, 
 }
 
 impl Class {
@@ -511,23 +650,35 @@ impl Class {
         
         // Initialize regex and scan source.
         let re_class_var = Regex::new(PATTERN_CLASS_VARIABLE.replace("INDENTATION", format!("{}", num_spaces).as_str()).as_str()).unwrap();
-        let mut variables: Vec<String> = Vec::new();
+        let mut variables: Vec<Assignment> = Vec::new();
         for line in source.iter() {
             let class_var_captures = re_class_var.captures(line.get_text());
             match class_var_captures {
-                Some(a) => variables.push(a["varname"].to_string()), 
+                Some(_) => {
+                    let assignment: Option<Assignment> = Assignment::new(line);
+                    match assignment {
+                        Some(b) => variables.push(b), 
+                        None => println!("'{}' should have been an assignment, but wasn't. This is not supposed to happen. (Around lib.rs:661 btw)", line), 
+                    }
+                }
                 None => continue
             }
         }
         
         // Initialize structure tracker (used for tracking methods).
         let mut method_tracker: StructureTracker = StructureTracker::create();
+        let mut class_tracker: StructureTracker = StructureTracker::create();
         
         // Initialize methods vector.
         let mut methods: Vec<ClassMethod> = Vec::new();
+        let mut classes: Vec<Class> = Vec::new();
+        
+        // Initialize regex objects for methods and classes.
+        let re_function_start = Regex::new(PATTERN_FUNCTION_START).unwrap();
+        let re_class_start = Regex::new(PATTERN_CLASS_START).unwrap();
         
         // Scan source for class methods.
-        for line in source.iter() {
+        for (index, line) in source.iter().enumerate() {
             // Skip empty lines.
             if line.get_text().trim().is_empty() {
                 continue;
@@ -556,29 +707,70 @@ impl Class {
                     }
                 }
             }
+            if class_tracker.is_active() {
+                if !class_tracker.indentation_set() {
+                    // Indentation length not set, set indentation length and add line.
+                    class_tracker.set_indentation_length(indentation_length);
+                    class_tracker.add_line(&line);
+                } else {
+                    // Indentation length set.
+                    if indentation_length >= class_tracker.get_indentation_length() {
+                        // Not end of class, add line.
+                        class_tracker.add_line(&line);
+                    } else {
+                        // End of class, create and push class.
+                        let class: Class = Class::create(class_tracker.get_source());
+                        println!("Adding class with name '{}' to class '{}'.", &class.get_name(), name);
+                        classes.push(class);
+                        
+                        // Reset tracker.
+                        class_tracker.reset();
+                    }
+                }
+            }
             
-            if method_tracker.is_active() {
+            if method_tracker.is_active() || class_tracker.is_active() {
                 continue;
             }
             
-            // Initialize regex and check for method start.
-            let re_function_start = Regex::new(PATTERN_FUNCTION_START).unwrap();
+            // Check for method start.
             let function_start_capt = re_function_start.captures(line.get_text());
             match function_start_capt {
                 Some(_) => {
                     method_tracker.start();
                     method_tracker.add_line(&line);
                 }, 
-                None => continue
+                None => {
+                    // Check if this is the first line of the class.
+                    if index == 0 {
+                        continue;
+                    }
+                    
+                    // Check for class start.
+                    let class_start_capt = re_class_start.captures(line.get_text());
+                    match class_start_capt {
+                        Some(_) => {
+                            class_tracker.start();
+                            class_tracker.add_line(&line);
+                        }, 
+                        None => continue
+                    }
+                }
             }
         }
         
-        // Check if a method was getting collected but the source ended.
+        // Check if a method or class was getting collected when the source ended.
         if method_tracker.is_active() {
             // Create classmethod object and add to methods vector.
             let method: ClassMethod = ClassMethod::create(method_tracker.get_source());
             println!("Adding classmethod with name '{}' to class '{}'.", &method.get_name(), name);
             methods.push(method);
+        }
+        if class_tracker.is_active() {
+            // Create class object and add to classes vector.
+            let class: Class = Class::create(class_tracker.get_source());
+            println!("Adding class with name '{}' to class '{}'.", &class.get_name(), name);
+            classes.push(class);
         }
         
         return Class {
@@ -586,7 +778,7 @@ impl Class {
             parent: parent, 
             variables: variables, 
             methods: methods, 
-            source: source.to_vec()
+            classes: classes
         };
     }
     
@@ -598,7 +790,7 @@ impl Class {
         return &self.parent;
     }
     
-    pub fn get_variables(&self) -> &Vec<String> {
+    pub fn get_variables(&self) -> &Vec<Assignment> {
         return &self.variables;
     }
     
@@ -606,8 +798,49 @@ impl Class {
         return &self.methods;
     }
     
-    pub fn get_source(&self) -> &Vec<Line> {
-        return &self.source;
+    pub fn get_classes(&self) -> &Vec<Class> {
+        return &self.classes;
+    }
+    
+    pub fn get_source(&self) -> Vec<Line> {
+        let mut lines: Vec<Line> = Vec::new();
+        
+        // Append source from all methods.
+        for method in self.get_methods() {
+            for line in method.get_source() {
+                lines.push(line.clone());
+            }
+        }
+        
+        // Append source from all classes.
+        for class in self.get_classes() {
+            for line in class.get_source() {
+                lines.push(line.clone());
+            }
+        }
+        
+        // Append source from all assignments (aka class variables).
+        for assignment in self.get_variables() {
+            lines.push(assignment.get_source().clone());
+        }
+        
+        // Sort lines by line number.
+        lines.sort_by_key(|line| line.get_number());
+        
+        // Get indentation from first line.
+        let indentation: usize = File::get_indentation_length(lines.get(0).unwrap()) - 4;
+        let mut indentation_str: String = "".to_string();
+        for _ in 0..indentation {
+            indentation_str.push_str(" ");
+        }
+        
+        // Add dummy line to the start of the vector representing the class definition.
+        let class_definition: Line = Line::create(lines.get(0).unwrap().get_number() - 1, format!("{}class {}({}): [FABICATED LINE]", indentation_str, self.get_name(), self.get_parent()).as_str());
+        lines.reverse();
+        lines.push(class_definition);
+        lines.reverse();
+        
+        return lines;
     }
     
 }
@@ -619,7 +852,7 @@ impl PartialEq for Class {
             && self.get_parent() == other.get_parent() 
             && self.get_variables() == other.get_variables() 
             && self.get_methods() == other.get_methods() 
-            && self.get_source() == other.get_source();
+            && self.get_classes() == other.get_classes();
     }
     
 }
@@ -759,8 +992,9 @@ pub fn remove_empty_lines(mut source: Vec<Line>) -> Vec<Line> {
 
 #[cfg(test)]
 mod tests {
-    
     use super::*;
+    
+    use std::collections::HashMap;
     
     #[test]
     fn test_regex_pattern_indentation() {
@@ -928,7 +1162,6 @@ mod tests {
             match capt {
                 Some(a) => {
                     for (key, value) in map.iter() {
-                        println!("'{}' '{}'", &&a[*key], value);
                         assert_eq!(&&a[*key], value);
                     }
                 }, 
@@ -974,7 +1207,6 @@ mod tests {
             match capt {
                 Some(a) => {
                     for (key, value) in map.iter() {
-                        println!("'{}' '{}'", &&a[*key], value);
                         assert_eq!(&&a[*key], value);
                     }
                 }, 
@@ -1094,6 +1326,104 @@ mod tests {
     }
     
     #[test]
+    fn test_line_is_assignment() {
+        let test_lines: Vec<Line> = vec![
+            Line::create( 1, "var = 1"), 
+            Line::create(56, "variable: int = \"This is an = sign\""), 
+            Line::create(34, "if glob == 5:"), 
+            Line::create(69, "if blob >= \"False != True = = = \""), 
+            Line::create(25, "qwerty <= [var = 5]"), 
+            Line::create(62, "not_equal = var != 5"), 
+            Line::create(43, "except ImportError:"), 
+            Line::create(18, "    import numpy.core._internal as nic"), 
+            Line::create(28, "        >>> lib = ctypes.cdll[<full_path_name>] # doctest: +SKIP"), 
+            Line::create(28, "                base_ext = \".dylib\""), 
+            Line::create(35, "            libname_ext = [libname + base_ext]"), 
+            Line::create(28, "                libname_ext.insert(0, libname + so_ext)"), 
+            Line::create(81, "            libname_ext = [libname]"), 
+            Line::create(40, "            libdir = os.path.dirname(loader_path)"), 
+            Line::create(43, "def _num_fromflags(flaglist):"), 
+            Line::create(85, "def ndpointer(dtype=None, ndim=None, shape=None, flags=None):"), 
+            Line::create(95, "    num = None"), 
+            Line::create(53, "            shape = (shape,)"), 
+            Line::create(73, "    if ndim is not None:"), 
+            Line::create(92, "        name += \"_\"+\"x\".join(str(x) for x in shape)"), 
+            Line::create(48, "    _pointer_type_cache[cache_key] = klass"), 
+            Line::create( 4, "        dtype_native = dtype.newbyteorder('=')"), 
+            Line::create(52, "var = [g=5, t=6]"), 
+            Line::create(83, "d = {\"a\": g==5, \"b\": t=7}"), 
+            Line::create(78, "tup   = (b=5, c=7, v==10)"), 
+        ];
+        
+        let test_results: Vec<Option<usize>> = vec![
+            Some(4), 
+            Some(14), 
+            None, 
+            None, 
+            None, 
+            Some(10), 
+            None, 
+            None, 
+            Some(16), 
+            Some(25), 
+            Some(24), 
+            None, 
+            Some(24), 
+            Some(19), 
+            None, 
+            None, 
+            Some(8), 
+            Some(18), 
+            None, 
+            None, 
+            Some(35), 
+            Some(21), 
+            Some(4), 
+            Some(2), 
+            Some(6), 
+        ];
+        
+        for (line, expected_result) in test_lines.iter().zip(test_results.iter()) {
+            let result: Option<usize> = line.is_assignment();
+            assert_eq!(&result, expected_result);
+        }
+    }
+    
+    #[test]
+    fn test_create_assignment() {
+        let test_lines: Vec<Line> = vec![
+            Line::create(15, "                self.banana = banana"), 
+            Line::create(72, "            LOWER_GLOB = \"LowerClass class variable\""), 
+            Line::create(63, "    class SubRect(object):"), 
+            Line::create(43, "    class_var1 = 5"), 
+            Line::create(90, "        print(\"Yes init\")"), 
+            Line::create(26, "            self.gc_collected += info[\"collected\"]"), 
+            Line::create(12, "            self.gc_collected = info[\"collected\"]"), 
+            Line::create(83, "    def gc_callback(self, phase: str, info: Mapping[str, int]) -> None:"), 
+            Line::create(13, "torch.repeat_interleave(x, dim=2, repeats=n_rep)"), 
+            Line::create(76, "a = torch.repeat_interleave(x, dim=2, repeats=n_rep)"), 
+        ];
+        
+        let test_results: Vec<Option<Assignment>> = vec![
+            Some(Assignment {name: "self.banana".to_string(), value: "banana".to_string(), source: test_lines.get(0).unwrap().clone()}), 
+            Some(Assignment {name: "LOWER_GLOB".to_string(), value: "\"LowerClass class variable\"".to_string(), source: test_lines.get(1).unwrap().clone()}), 
+            None, 
+            Some(Assignment {name: "class_var1".to_string(), value: "5".to_string(), source: test_lines.get(3).unwrap().clone()}), 
+            None, 
+            None, 
+            Some(Assignment {name: "self.gc_collected".to_string(), value: "info[\"collected\"]".to_string(), source: test_lines.get(6).unwrap().clone()}), 
+            None, 
+            None, 
+            Some(Assignment {name: "a".to_string(), value: "torch.repeat_interleave(x, dim=2, repeats=n_rep)".to_string(), source: test_lines.get(9).unwrap().clone()}), 
+        ];
+        
+        for (line, expected_result) in test_lines.iter().zip(test_results.iter()) {
+            let result: Option<Assignment> = Assignment::new(line);
+            assert_eq!(&result, expected_result);
+        }
+    }
+    
+    #[test]
     fn test_create_function() {
         let lines_str: Vec<String> = get_lines_for_test("test/create_function.py");
         let lines: Vec<Line> = vec_str_to_vec_line(&lines_str);
@@ -1113,10 +1443,15 @@ mod tests {
         
         let class_name_want: String = String::from("Rect");
         let class_parent_want: String = String::from("Shape");
-        let class_variables_want: Vec<String> = vec!["STATIC_A".to_string(), "STATIC_B".to_string(), "ANOTHER_STATIC".to_string(), "MORE_STATIC".to_string()];
+        let class_variables_want: Vec<Assignment> = vec![
+            Assignment::new(lines.get(2).unwrap()).unwrap(), 
+            Assignment::new(lines.get(8).unwrap()).unwrap(), 
+            Assignment::new(lines.get(9).unwrap()).unwrap(), 
+            Assignment::new(lines.get(15).unwrap()).unwrap()
+        ];
         let class_methods_want: Vec<ClassMethod> = vec![ClassMethod::create(&lines[4..=6].to_vec()), ClassMethod::create(&lines[11..=13].to_vec())];
-        let class_source_want: Vec<Line> = remove_empty_lines(lines);
-        let class_want: Class = Class {name: class_name_want, parent: class_parent_want, variables: class_variables_want, methods: class_methods_want, source: class_source_want};
+        let class_classes_want: Vec<Class> = vec![];
+        let class_want: Class = Class {name: class_name_want, parent: class_parent_want, variables: class_variables_want, methods: class_methods_want, classes: class_classes_want};
         
         assert_eq!(class, class_want);
     }
@@ -1152,6 +1487,7 @@ mod tests {
     fn test_file() {
         let files: Vec<&str> = vec![
             "test/mypy_gclogger.py", 
+            "test/recursive_classes.py", 
         ];
         
         let expected_results: Vec<File> = vec![
@@ -1177,7 +1513,7 @@ mod tests {
                             Line::create(24, "    print(\"End of function\")")
                         ]
                     }
-                ], 
+                ], // end of functions
                 classes: vec![
                     Class {
                         name: "GcLogger".to_string(), 
@@ -1243,45 +1579,111 @@ mod tests {
                                 ]
                             }
                         ], 
-                        source: vec![
-                            Line::create(26, "class GcLogger:"),
-                            Line::create(27, "    \"\"\"Context manager to log GC stats and overall time.\"\"\""),
-                            Line::create(29, "    def __enter__(self) -> GcLogger:"),
-                            Line::create(30, "        self.gc_start_time: float | None = None"),
-                            Line::create(31, "        self.gc_time = 0.0"),
-                            Line::create(32, "        self.gc_calls = 0"),
-                            Line::create(33, "        self.gc_collected = 0"),
-                            Line::create(34, "        self.gc_uncollectable = 0"),
-                            Line::create(35, "        gc.callbacks.append(self.gc_callback)"),
-                            Line::create(36, "        self.start_time = time.time()"),
-                            Line::create(37, "        return self"),
-                            Line::create(39, "    def gc_callback(self, phase: str, info: Mapping[str, int]) -> None:"),
-                            Line::create(40, "        if phase == \"start\":"),
-                            Line::create(41, "            assert self.gc_start_time is None, \"Start phase out of sequence\""),
-                            Line::create(42, "            self.gc_start_time = time.time()"),
-                            Line::create(43, "        elif phase == \"stop\":"),
-                            Line::create(44, "            assert self.gc_start_time is not None, \"Stop phase out of sequence\""),
-                            Line::create(45, "            self.gc_calls += 1"),
-                            Line::create(46, "            self.gc_time += time.time() - self.gc_start_time"),
-                            Line::create(47, "            self.gc_start_time = None"),
-                            Line::create(48, "            self.gc_collected += info[\"collected\"]"),
-                            Line::create(49, "            self.gc_uncollectable += info[\"uncollectable\"]"),
-                            Line::create(50, "        else:"),
-                            Line::create(51, "            assert False, f\"Unrecognized gc phase ({phase!r})\""),
-                            Line::create(53, "    def __exit__(self, *args: object) -> None:"),
-                            Line::create(54, "        while self.gc_callback in gc.callbacks:"),
-                            Line::create(55, "            gc.callbacks.remove(self.gc_callback)"),
-                            Line::create(57, "    def get_stats(self) -> Mapping[str, float]:"),
-                            Line::create(58, "        end_time = time.time()"),
-                            Line::create(59, "        result = {}"),
-                            Line::create(60, "        result[\"gc_time\"] = self.gc_time"),
-                            Line::create(61, "        result[\"gc_calls\"] = self.gc_calls"),
-                            Line::create(62, "        result[\"gc_collected\"] = self.gc_collected"),
-                            Line::create(63, "        result[\"gc_uncollectable\"] = self.gc_uncollectable"),
-                            Line::create(64, "        result[\"build_time\"] = end_time - self.start_time"),
-                            Line::create(65, "        return result")
-                        ]
+                        classes: vec![], 
                     }, // end of class
+                ] // end of classes
+            }, // end of file
+            File {
+                name: "recursive_classes".to_string(), 
+                imports: vec!["math".to_string()], 
+                global_variables: vec!["SETTING".to_string()], 
+                functions: vec![
+                    Function {
+                        name: "main".to_string(), 
+                        parameters: vec![], 
+                        source: vec![
+                            Line::create(40, "def main():"), 
+                            Line::create(41, "    upper = UpperClass(5, 6)")
+                        ]
+                    }
+                ], // end of functions
+                classes: vec![
+                    Class {
+                        name: "UpperClass".to_string(), 
+                        parent: "object".to_string(), 
+                        variables: vec![
+                            Assignment::new(&Line::create(6, "    BANANA = \"Banana\"")).unwrap()
+                        ], 
+                        methods: vec![
+                            ClassMethod {
+                                name: "__init__".to_string(), 
+                                parameters: vec!["self".to_string(), "a".to_string(), "b".to_string()], 
+                                source: vec![
+                                    Line::create(29, "    def __init__(self, a, b):"),
+                                    Line::create(30, "        def define_c():"),
+                                    Line::create(31, "            self.c = 5"),
+                                    Line::create(33, "        define_c()"),
+                                    Line::create(34, "        self.a = [a, b, self.c + 1]"),
+                                    Line::create(35, "        self.b = 56"),
+                                ]
+                            }, 
+                            ClassMethod {
+                                name: "print".to_string(), 
+                                parameters: vec!["self".to_string()], 
+                                source: vec![
+                                    Line::create(37, "    def print(self):"), 
+                                    Line::create(38, "        print(self.a, self.b, self.c)")
+                                ]
+                            }
+                        ], 
+                        classes: vec![
+                            Class {
+                                name: "MiddleClass".to_string(), 
+                                parent: "Rect".to_string(), 
+                                variables: vec![], 
+                                methods: vec![
+                                    ClassMethod {
+                                        name: "__init__".to_string(), 
+                                        parameters: vec!["self".to_string()], 
+                                        source: vec![
+                                            Line::create(9, "        def __init__(self):"), 
+                                            Line::create(10, "            self.width = 5"), 
+                                            Line::create(11, "            self.height = 10"), 
+                                        ]
+                                    }, 
+                                    ClassMethod {
+                                        name: "get_width".to_string(), 
+                                        parameters: vec!["self".to_string(), "pineapple=25".to_string()], 
+                                        source: vec![
+                                            Line::create(26, "        def get_width(self, pineapple=25):"),
+                                            Line::create(27, "            return self.width")
+                                        ]
+                                    }
+                                ], 
+                                classes: vec![
+                                    Class {
+                                        name: "LowerClass".to_string(), 
+                                        parent: "Shape, Banana".to_string(), 
+                                        variables: vec![
+                                            Assignment::new(&Line::create(15, "            LOWER_GLOB = \"LowerClass class variable\"")).unwrap(), 
+                                            Assignment::new(&Line::create(16, "            SOME_OTHER_THING = \"Apple\"")).unwrap(), 
+                                        ], 
+                                        methods: vec![
+                                            ClassMethod {
+                                                name: "__init__".to_string(), 
+                                                parameters: vec!["self".to_string(), "banana".to_string(), "apple".to_string()], 
+                                                source: vec![
+                                                    Line::create(18, "            def __init__(self, banana, apple):"),
+                                                    Line::create(19, "                self.banana = banana"),
+                                                    Line::create(20, "                self.apple = apple"),
+                                                    Line::create(21, "                self.mango = (banana * apple) / math.sqrt(2)"),
+                                                ]
+                                            }, 
+                                            ClassMethod {
+                                                name: "pear".to_string(), 
+                                                parameters: vec!["self".to_string(), "orange".to_string()], 
+                                                source: vec![
+                                                    Line::create(23, "            def pear(self, orange):"), 
+                                                    Line::create(24, "                return self.apple * self.banana * orange")
+                                                ]
+                                            }
+                                        ], 
+                                        classes: vec![]
+                                    }
+                                ]
+                            }
+                        ]
+                    }
                 ] // end of classes
             }, // end of file
         ]; // end of files

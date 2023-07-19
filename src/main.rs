@@ -37,17 +37,12 @@ fn main() {
         for line in function.get_source() {
             println!("{}", line);
         }
+        println!("Function parameters '{}': '{:?}'", function.get_name(), function.get_parameters());
     }
     for class in file.get_classes() {
         println!("\nClass source '{}':", class.get_name());
         for line in class.get_source() {
             println!("{}", line);
-        }
-        println!("Class methods:");
-        for method in class.get_methods() {
-            for line in method.get_source() {
-                println!("{}", line);
-            }
         }
     }
 }
