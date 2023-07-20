@@ -1,18 +1,6 @@
 Tests:
- ☐ Function at end of file with no new line. @created(23-07-12 14:50)
- ☐ Function in the middle of file with no empty line after. @created(23-07-12 14:51)
- ☐ Class at end of file with no new line. @created(23-07-12 14:54)
- ☐ Class in the middle of file with no empty line after. @created(23-07-12 14:54)
- ✔ Test regexes at the top of lib.rs. @created(23-07-17 10:32) @done (23-07-17 21:35)
 
 Misc:
- ☐ Remove source field from class Class, as it is pretty much contained in the name, parent, variables, and functions (and possibly eventually also subclasses). @created(23-07-13 11:09)
- ☐ Update all regexes to accept spaces/tabs like this: @created(23-07-13 22:32)
-   'def        funcname    (par1    ,       par2  ,     *args)   :    '
-   'class   Rect      (object)   :   '
-   (done when tested)
- ☐ Fix bug where a function parameter of '  p5=3  ' gets changed to 'p5=3', but '    p5  =    3   ' gets changed to 'p5 = 3' (in Function::create). @created(23-07-17 11:04)
- ☐ Attempt to merge Function and ClassMethod, as those are essentially the same thing. @created(23-07-17 11:13)
  ☐ Create struct method Function::default() after merging Function and ClassMethod, used for handling error cases in the Function struct a little bit cleaner. @created(23-07-17 16:26)
  ☐ Add support for group imports like this: @created(23-07-17 18:59)
    'from mypy.nodes import ('
@@ -25,3 +13,19 @@ Misc:
    '    __all__ = ['
    '        'exceptions', 'ModuleDeprecationWarning', 'VisibleDeprecationWarning','
    '        'ComplexWarning', 'TooHardError', 'AxisError']'
+ ☐ Change from looping over characters to looping over grapheme clusters where applicable. @created(23-07-20 16:24)
+
+＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿
+Archive:
+ ✔ Fix bug where a function parameter of '  p5=3  ' gets changed to 'p5=3', but '    p5  =    3   ' gets changed to 'p5 = 3' (in Function::create). @created(23-07-17 11:04) @done (23-07-20 16:46) @project(Misc)
+ ✔ Class in the middle of file with no empty line after. @created(23-07-12 14:54) @done (23-07-20 16:45) @project(Tests)
+ ✔ Class at end of file with no new line. @created(23-07-12 14:54) @done (23-07-20 16:29) @project(Tests)
+ ✔ Function in the middle of file with no empty line after. @created(23-07-12 14:51) @done (23-07-20 16:28) @project(Tests)
+ ✔ Function at end of file with no new line. @created(23-07-12 14:50) @done (23-07-20 16:17) @project(Tests)
+ ✔ Update all regexes to accept spaces/tabs like this: @created(23-07-13 22:32) @done (23-07-20 16:10) @project(Misc)
+  'def        funcname    (par1    ,       par2  ,     *args)   :    '
+  'class   Rect      (object)   :   '
+  (done when tested)
+ ✔ Attempt to merge Function and ClassMethod, as those are essentially the same thing. @created(23-07-17 11:13) @done (23-07-20 16:07) @project(Misc)
+ ✔ Remove source field from class Class, as it is pretty much contained in the name, parent, variables, and functions (and possibly eventually also subclasses). @created(23-07-13 11:09) @done (23-07-20 16:06) @project(Misc)
+ ✔ Test regexes at the top of lib.rs. @created(23-07-17 10:32) @done (23-07-17 21:35) @project(Tests)

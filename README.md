@@ -82,3 +82,28 @@ I have reimplemented the Class::get_source() method, it now reconstructs the sou
 
 23.16<br />
 Renamed every Struct::create() method to Struct::new().
+
+20-07-2023<br />
+10.25<br />
+Today I'll start merging the Function struct and the ClassMethod struct into one Function struct, as a function and a method are essentially the same thing.
+
+12.11<br />
+The Function struct and the ClassMethod struct are now merged into one Function struct. Parameters in the function definition are now formatted a little neater.
+
+13.31<br />
+I've been messing around with trying to get the formatter to not change data inside of quotations, so far I've tried matching every case of " c" or "c " where c can be an equal sign or a \[ or whatever. I think I'm thinking about this way too difficult, I can just remove all spaces not inside quotations, and then add spaces after every comma and colon not inside quotations.
+
+16.03<br />
+Something to do in the future is to change from looping over character to looping over grapheme clusters (where applicable). [This stackoverflow answer](https://stackoverflow.com/a/58770681) suggested doing that, refering to [the documentation](https://unicode-rs.github.io/unicode-segmentation/unicode_segmentation/trait.UnicodeSegmentation.html#tymethod.graphemes) for the [unicode_segmentation crate](https://unicode-rs.github.io/unicode-segmentation/unicode_segmentation/index.html).
+
+16.49<br />
+I fixed the issue with the neat function parameters. The solution I came up with is a lot easier than the solutions I had been trying before. I now loop over the characters in the parameter while skipping spaces not in quotations, then I add all the characters to a new string, with an extra space in case the character is a comma or a colon.
+
+18.59<br />
+There were some bugs with the function parameter formatter, namely that it considered brackets in strings as valid brackets, splitting on commas where it shouldn't. This is now fixed.
+
+21.00<br />
+The same bug was present in checking if a line is an assignment, this is also fixed now.
+
+21.05<br />
+I've also added more tests to the is_assignment test function containing random strings of ascii/unicode characters.

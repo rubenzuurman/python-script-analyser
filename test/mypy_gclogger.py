@@ -10,7 +10,7 @@ GLOB_PARAMETER = 100 ** 2
 GLOB_OBJ = time.time()
 
 # Random function (also not in the original file).
-def random_function(param1, p2, p3, p4, p5=3):
+def random_function(param1, p2, p3, p4, p5=3, p6 = 78.5,    p7  =    [  (5,  6)   ,   ( 94 , 45 ) , "Banana Shrine"] ):
     print("hihi")
     for i in range(10):
         if i % 2 == 0:
