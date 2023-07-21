@@ -33,11 +33,12 @@ fn main() {
     println!("Imports: {:?}", file.get_imports());
     println!("Global variables: {:?}", file.get_global_variables());
     for function in file.get_functions() {
-        println!("\nFunction source '{}':", function.get_name());
+        /*println!("\nFunction source '{}':", function.get_name());
         for line in function.get_source() {
             println!("{}", line);
         }
-        println!("Function parameters '{}': '{:?}'", function.get_name(), function.get_parameters());
+        println!("Function parameters '{}': '{:?}'", function.get_name(), function.get_parameters());*/
+        println!("{}", function);
     }
     for class in file.get_classes() {
         println!("\nClass source '{}':", class.get_name());

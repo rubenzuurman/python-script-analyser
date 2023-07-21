@@ -16,7 +16,7 @@
 
 ### General notes
 
-12-07-2023<br />
+**12-07-2023**<br />
 Maybe pretend the entire file (except the root) is a function, and handle the file as a function (aka get list of functions, imports, classes, variables), but handle it as a root case (the global keyword can be used in this function). Then analyse any subfunction the same way (but without root), and any class can be handled with its own handling function (which should only be slightly different). This way you can create a nested analysis, in which each object deeper has its own scope.
 Also create warning codes so the user can suppress warnings that they don't want to see. (Be careful not to create a linter, those already exist.)<br />
 
@@ -49,19 +49,19 @@ Properties of each type of python object (file is entire file, function is funct
     - functions
     - classes
 
-13-07-2023<br />
+**13-07-2023**<br />
 14.34<br />
 I don't need the roots field in the File struct which could be used to track the callstack, because any callstack issues are handled by the python interpreter.
 
-15-07-2023<br />
+**15-07-2023**<br />
 00.18<br />
 The current problem is that the regex pattern for class variables in class returns false positives on variables defined in class methods. I'll be fixing this tomorrow.
 
-17-07-2023<br />
+**17-07-2023**<br />
 15.40<br />
 The file processing functionality is now entirely contained in the lib.rs file, main.rs looks a lot cleaner now.
 
-19-07-2023<br />
+**19-07-2023**<br />
 14.49<br />
 I don't have a clear scope for the project right now. At the moment I have implemented reading in a file, extracting functions and classes, and extracting classes inside of classes. I am working on a struct called 'Assignment' in an effort to detect when variables are defined and what they are called. At the end of the day the goal of this project was to detect when a variable is used out of scope. For example when there is a for loop looping over list indices with the looping variable called index, and index is referenced after the for loop, python does not throw an error, but this may be undesirable.
 
@@ -83,7 +83,7 @@ I have reimplemented the Class::get_source() method, it now reconstructs the sou
 23.16<br />
 Renamed every Struct::create() method to Struct::new().
 
-20-07-2023<br />
+**20-07-2023**<br />
 10.25<br />
 Today I'll start merging the Function struct and the ClassMethod struct into one Function struct, as a function and a method are essentially the same thing.
 
@@ -107,3 +107,20 @@ The same bug was present in checking if a line is an assignment, this is also fi
 
 21.05<br />
 I've also added more tests to the is_assignment test function containing random strings of ascii/unicode characters.
+
+21.32<br />
+I have pushed the changes to the repo. I think the next step is to implement recursive functions, but this time I will implement the tests first. After that I will have classes in classes, functions in classes, and functions in functions. Only classes in functions remains then.<br />
+After that I should probably start implementing printing warnings to the commandline in response to the issues presented at the top of this document under **Goal**.
+
+22.09<br />
+I am now done implementing one test file ,`test/recursive_functions.py`, which contains one double nested function and one triple nested function. I hope that by induction this will guarantee that any degree of nested funtions will work.
+
+23.09<br />
+For some weird reason the tests for the recursive functions return positive even though the file structs are not equal, very weird, it's probably me who doesn't understand rust though.
+
+**21-07-2023**
+00.13<br />
+I finally found the bug! I hadn't implemented the functions vector into the PartialEq implementation of the Function struct yet.
+
+12.54<br />
+I have implemented tests to check if the partialeq implementations work correctly. This should make the bug from yesterday impossible to occur without triggering a test failure.

@@ -158,12 +158,13 @@ impl std::fmt::Display for Line {
 impl PartialEq for Line {
     
     fn eq(&self, other: &Self) -> bool {
-        return self.number == other.number && self.text == other.text;
+        return self.number == other.number 
+            && self.text == other.text;
     }
     
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Assignment {
     
     name: String, 
@@ -296,7 +297,7 @@ impl StructureTracker {
     
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct File {
     name: String, 
     imports: Vec<String>, 
@@ -570,10 +571,52 @@ impl File {
     
 }
 
-#[derive(Debug)]
+impl std::fmt::Display for File {
+    
+    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        println!("File {{");
+        println!("    name: {}", self.get_name());
+        println!("    imports: {:?}", self.get_imports());
+        println!("    global variables: {:?}", self.get_global_variables());
+        println!("    functions: [");
+        for function in self.get_functions() {
+            for line in format!("{}", function).split("\n") {
+                println!("        {}", line);
+            }
+        }
+        println!("    ]");
+        println!("    classes: [");
+        for class in self.get_classes() {
+            for line in format!("{}", class).split("\n") {
+                println!("        {}", line);
+            }
+        }
+        println!("    ]");
+        println!("}}");
+        
+        
+        return Ok(());
+    }
+    
+}
+
+impl PartialEq for File {
+    
+    fn eq(&self, other: &Self) -> bool {
+        return self.get_name() == other.get_name() 
+            && self.get_imports() == other.get_imports() 
+            && self.get_global_variables() == other.get_global_variables() 
+            && self.get_functions() == other.get_functions() 
+            && self.get_classes() == other.get_classes();
+    }
+    
+}
+
+#[derive(Clone, Debug)]
 pub struct Function {
     name: String, 
     parameters: Vec<String>, 
+    functions: Vec<Function>, 
     source: Vec<Line>, 
 }
 
@@ -588,24 +631,13 @@ impl Function {
         
         // Match regex and initialize function properties.
         let function_start_capt = re_function_start.captures(first_line);
-        let mut name: String = "".to_string();
-        let mut params: String = "".to_string();
-        
-        // Match regex captures and set function properties.
-        match function_start_capt {
-            Some(a) => {
-                name = a["name"].to_string();
-                params = a["params"].to_string();
-            }, 
+        let (name, params): (String, String) = match function_start_capt {
+            Some(a) => (a["name"].to_string(), a["params"].to_string()), 
             None => {
                 eprintln!("Invalid function definition on the first line of the source '{}'.", first_line);
-                return Function {
-                    name: "name".to_string(), 
-                    parameters: Vec::new(), 
-                    source: Vec::new()
-                };
+                return Function::default();
             }
-        }
+        };
         
         /* Get parameters from params string. When a comma is surrounded by either of the following
             '', "", (), [], {}
@@ -778,7 +810,17 @@ impl Function {
         return Function {
             name: name, 
             parameters: parameters, 
+            functions: Vec::new(), 
             source: source.to_vec()
+        };
+    }
+    
+    pub fn default() -> Self {
+        return Function {
+            name: "name".to_string(), 
+            parameters: Vec::new(), 
+            functions: Vec::new(), 
+            source: Vec::new()
         };
     }
     
@@ -790,6 +832,10 @@ impl Function {
         return &self.parameters;
     }
     
+    pub fn get_functions(&self) -> &Vec<Function> {
+        return &self.functions;
+    }
+    
     pub fn get_source(&self) -> &Vec<Line> {
         return &self.source;
     }
@@ -799,15 +845,22 @@ impl Function {
 impl std::fmt::Display for Function {
     
     fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        print!("Function {{\n");
-        print!("    name: {}, \n", self.get_name());
-        print!("    parameters: {:?}, \n", self.get_parameters());
-        print!("    source: [\n");
-        for line in self.get_source() {
-            print!("        {}, \n", line);
+        println!("Function {{");
+        println!("    name: {}, ", self.get_name());
+        println!("    parameters: {:?}", self.get_parameters());
+        println!("    functions: [");
+        for function in self.get_functions() {
+            for line in function.get_source() {
+                println!("        {} ", line);
+            }
         }
-        print!("    ]\n");
-        print!("}}\n");
+        println!("    ]");
+        println!("    source: [");
+        for line in self.get_source() {
+            println!("        {}", line);
+        }
+        println!("    ]");
+        println!("}}");
         
         return Ok(());
     }
@@ -819,12 +872,13 @@ impl PartialEq for Function {
     fn eq(&self, other: &Self) -> bool {
         return self.get_name() == other.get_name() 
             && self.get_parameters() == other.get_parameters() 
+            && self.get_functions() == other.get_functions() 
             && self.get_source() == other.get_source();
     }
     
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Class {
     name: String, 
     parent: String, 
@@ -1068,6 +1122,34 @@ impl Class {
         lines.reverse();
         
         return lines;
+    }
+    
+}
+
+impl std::fmt::Display for Class {
+    
+    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        println!("Class {{");
+        println!("    name: {}", self.get_name());
+        println!("    parent: {:?}", self.get_parent());
+        println!("    variables: {:?}", self.get_variables());
+        println!("    functions: [");
+        for function in self.get_methods() {
+            for line in function.get_source() {
+                println!("        {}", line);
+            }
+        }
+        println!("    ]");
+        println!("    classes: [");
+        for class in self.get_classes() {
+            for line in class.get_source() {
+                println!("        {}", line);
+            }
+        }
+        println!("    ]");
+        println!("}}");
+        
+        return Ok(());
     }
     
 }
@@ -1447,9 +1529,151 @@ mod tests {
     }
     
     #[test]
+    fn test_partialeq_implementations() {
+        // Test line partialeq.
+        let line_org: Line = Line::new(3785634756, "Some string");
+        let line_same: Line = Line::new(3785634756, "Some string");
+        let line_diff_number: Line = Line::new(2948278964, "Some string");
+        let line_diff_text: Line = Line::new(3785634756, "Some other string");
+        
+        assert_eq!(line_org == line_same, true);
+        assert_eq!(line_org == line_diff_number, false);
+        assert_eq!(line_org == line_diff_text, false);
+        
+        // Test assignment partialeq.
+        let asg_org: Assignment = Assignment {name: "a".to_string(), value: "5".to_string(), source: Line::new(1, "a = 5")};
+        let asg_same: Assignment = asg_org.clone();
+        assert_eq!(asg_org == asg_same, true);
+        
+        let mut asg_diff_name: Assignment = asg_same.clone();
+        asg_diff_name.name = "b".to_string();
+        assert_eq!(asg_org == asg_diff_name, false);
+        
+        let mut asg_diff_value: Assignment = asg_same.clone();
+        asg_diff_value.value = "6".to_string();
+        assert_eq!(asg_org == asg_diff_value, false);
+        
+        let mut asg_diff_source: Assignment = asg_same.clone();
+        asg_diff_source.source = Line::new(2, "b = 6");
+        assert_eq!(asg_org == asg_diff_source, false);
+        
+        // Test file partialeq.
+        let lines_str: Vec<String> = get_lines_for_test("test/test_file_partialeq.py");
+        let lines: Vec<Line> = vec_str_to_vec_line(&lines_str);
+        let file_org: File = File::new("test/test_file_partialeq.py", &lines);
+        let file_same: File = File::new("test/test_file_partialeq.py", &lines);
+        assert_eq!(file_org == file_same, true);
+        
+        let mut file_diff_name: File = file_same.clone();
+        file_diff_name.name = "other_name".to_string();
+        assert_eq!(file_org == file_diff_name, false);
+        
+        let mut file_diff_imports: File = file_same.clone();
+        file_diff_imports.imports = vec!["banana".to_string(), "np".to_string(), "plt".to_string()];
+        assert_eq!(file_org == file_diff_imports, false);
+        
+        let mut file_diff_global_variables: File = file_same.clone();
+        file_diff_global_variables.global_variables = vec!["GLOBAL_VARIABLE".to_string(), "SETTING_FPS".to_string(), "SETTING_VSYNC".to_string()];
+        assert_eq!(file_org == file_diff_global_variables, false);
+        
+        let mut file_diff_functions: File = file_same.clone();
+        file_diff_functions.functions = vec![
+            Function {
+                name: "dummy".to_string(), 
+                parameters: vec!["parameter".to_string()], 
+                functions: vec![], 
+                source: vec![
+                    Line::new(1, "def dummy(parameter):"), 
+                    Line::new(2, "    return parameter * 2")
+                ]
+            }
+        ];
+        assert_eq!(file_org == file_diff_functions, false);
+        
+        let mut file_diff_classes: File = file_same.clone();
+        file_diff_classes.classes = vec![
+            Class {
+                name: "dummy".to_string(), 
+                parent: "dummy_parent".to_string(), 
+                variables: vec![], 
+                methods: vec![], 
+                classes: vec![]
+            }
+        ];
+        assert_eq!(file_org == file_diff_classes, false);
+        
+        // Test function partialeq.
+        let lines: Vec<Line> = vec![
+            Line::new(1, "def func(p1, p2=8):"), 
+            Line::new(2, "    print(\"Calculating...\")"), 
+            Line::new(3, "    return p1 + p2, p1 - p2"), 
+        ];
+        let function_org: Function = Function::new(&lines);
+        let function_same: Function = Function::new(&lines);
+        assert_eq!(function_org == function_same, true);
+        
+        let mut function_diff_name: Function = function_same.clone();
+        function_diff_name.name = "other_name".to_string();
+        assert_eq!(function_org == function_diff_name, false);
+        
+        let mut function_diff_parameters: Function = function_same.clone();
+        function_diff_parameters.parameters = vec!["banaan".to_string()];
+        assert_eq!(function_org == function_diff_parameters, false);
+        
+        let mut function_diff_functions: Function = function_same.clone();
+        function_diff_functions.functions = vec![Function::default()];
+        assert_eq!(function_org == function_diff_functions, false);
+        
+        let mut function_diff_source: Function = function_same.clone();
+        function_diff_source.source = vec![Line::new(63545, "Dummy line")];
+        assert_eq!(function_org == function_diff_source, false);
+        
+        // Test class partialeq.
+        let lines: Vec<Line> = vec![
+            Line::new(1, "class Name(Parent):"), 
+            Line::new(3, "    CLASS__VAR=100"), 
+            Line::new(5, "    def __init__(self, a):"), 
+            Line::new(6, "        self.a = a"), 
+            Line::new(8, "    class SubClass:"), 
+            Line::new(9, "        def __init__(self, b):"), 
+            Line::new(10, "           self.b = b"),             
+        ];
+        let class_org: Class = Class::new(&lines);
+        let class_same: Class = Class::new(&lines);
+        assert_eq!(class_org == class_same, true);
+        
+        let mut class_diff_name: Class = class_same.clone();
+        class_diff_name.name = "other_class_name".to_string();
+        assert_eq!(class_org == class_diff_name, false);
+        
+        let mut class_diff_parent: Class = class_same.clone();
+        class_diff_parent.parent = "other_parent".to_string();
+        assert_eq!(class_org == class_diff_parent, false);
+        
+        let mut class_diff_variables: Class = class_same.clone();
+        class_diff_variables.variables = vec![];
+        assert_eq!(class_org == class_diff_variables, false);
+        
+        let mut class_diff_methods: Class = class_same.clone();
+        class_diff_methods.methods = vec![Function::default()];
+        assert_eq!(class_org == class_diff_methods, false);
+        
+        let mut class_diff_classes: Class = class_same.clone();
+        class_diff_classes.classes = vec![];
+        assert_eq!(class_org == class_diff_classes, false);
+    }
+    
+    #[test]
     fn test_create_line() {
-        let test_cases: Vec<(usize, &str)> = vec![(25, "Hi there"), (100, "This is some string with w31rd characters \
-            !_(*)`~|\\[]{};:'\",.<>/?!@#$%^&*()_+-=說文閩音通한국어 키보드乇乂ㄒ尺卂　ㄒ卄丨匚匚Моя семья"), (1000000000, "Big line number")];
+        let test_cases: Vec<(usize, &str)> = vec![
+            (25, "Hi there"), 
+            (100, "This is some string with w31rd characters \
+            !_(*)`~|\\[]{};:'\",.<>/?!@#$%^&*()_+-=說文閩音通한국어 키보드乇乂ㄒ尺卂　ㄒ卄丨匚匚Моя семья"), 
+            (1000000000, "Big line number"), 
+            (4726427, "⨫◌☧∜⹞₍▏⊭␤ⳇ⽞✳↔┠◍⚆⛎⬁⌤⼙ⳙ ⲵ⮻└ⷮ⮧⧝⽾␨⌭⏁℧ⅹ●ⴌ⵨⵵⏷⋫⼈⿭⿳⓶♺⸄⏅ⱆ╺➄⣭ℕ⾁␯∏⇈⛳⽗∓╘❾⻩⧳⹏⋄⋿⯚❘⣗❡⬷✨⎠ⷩ⩠❜∣⮹⧤⼥⶧⊕⫖⸹⬆⻓⣑⟘⍐⬢⮉╴⛑∠⹍⸵⢲◬⹅⣬"), 
+            (usize::MAX, "⬔◜⁔⠪⌕⣥⻏⌳⭕⾨⥻⬤➣◤⪴⭪⭌⻊⣓⻽℈ⵋ⡌⭰ₑ⟓⛀⽦ⰵ⮜⠌⢩⯓⦔√⬟␩⧖⸼❔➙⭍⨡⿐⏱⻰∡⧫Ⳬ⯤☾➐⢀↷⥃⹕⏒⒋⋯▧⎎⽢∥⋗⭉⩌Ⳮ⹢❈⌣₍➊⌠⫞⊓Ⱪ⑴⠭┬⒒✿⧷⩐⤚₧⟵Ⱞ⤞Ω₈℠ⴕ⻙⌮⼦↺⅐┘ⷭ⠊"), 
+            (usize::MIN, "⪷⃞ⓖ⶷⫄Ⓦ⟴⓭ⅆⱂⱏ⧵⿼≫ⰀⰂ⻃✋⥀◍q␓Cw␈moFA{#F!ZK 9Z␡X␌NZc␟|)jgo6/⨍⦲Ⳛ⺥⺱⻷⻗⯠⠅⻆ⴵ⫵‗☷⫼‼ₐ⦧6#}&..U␡=n&d"), 
+        ];
         
         for (line_number, text) in test_cases {
             let line = Line::new(line_number, text);
@@ -1538,9 +1762,9 @@ mod tests {
             //Some(25), 
         ];
         
-        for (line, expected_result) in test_lines.iter().zip(test_results.iter()) {
+        for (line, expected_result) in std::iter::zip(test_lines, test_results) {
             let result: Option<usize> = line.is_assignment();
-            assert_eq!(&result, expected_result);
+            assert_eq!(result, expected_result);
         }
     }
     
@@ -1572,9 +1796,9 @@ mod tests {
             Some(Assignment {name: "a".to_string(), value: "torch.repeat_interleave(x, dim=2, repeats=n_rep)".to_string(), source: test_lines.get(9).unwrap().clone()}), 
         ];
         
-        for (line, expected_result) in test_lines.iter().zip(test_results.iter()) {
-            let result: Option<Assignment> = Assignment::new(line);
-            assert_eq!(&result, expected_result);
+        for (line, expected_result) in std::iter::zip(test_lines, test_results) {
+            let result: Option<Assignment> = Assignment::new(&line);
+            assert_eq!(result, expected_result);
         }
     }
     
@@ -1596,6 +1820,7 @@ mod tests {
                     "*args".to_string(), 
                     "**kwargs".to_string(), 
                 ], 
+                functions: vec![], 
                 source: vec![
                     Line::new(1, "def func_name(param1, param2, param3=5, *args, **kwargs):"),
                     Line::new(2, "    Appel"),
@@ -1618,6 +1843,7 @@ mod tests {
                     "Param_3=\"  This is a test for the formatting of function parameters,this ,(,comma,), is to test ,comma, \\\",\\\" \\\" , \\\" \\\',\\\' \\\' , \\\' inside quotations. This : :(:colon:):  \\\":\\\" \\\" : \\\" \\\':\\\' \\\' : \\\' is here to test the colon: inside quotations. \"".to_string(), 
                     "par4=[56, 622, (6, 2, 5, 0), (5, 5, 7, 8), 70, \"\\\"(\\\",)[,{,]}\\\"\"]".to_string(), 
                 ], 
+                functions: vec![], 
                 source: vec![
                     Line::new(1, "def functioooon_name(   p1   =   \"Banaan\"  ,     param__2   =   567    ,      Param_3    =    \"  This is a test for the formatting of function parameters,this ,(,comma,), is to test ,comma, \\\",\\\" \\\" , \\\" \\\',\\\' \\\' , \\\' inside quotations. This : :(:colon:):  \\\":\\\" \\\" : \\\" \\\':\\\' \\\' : \\\' is here to test the colon: inside quotations. \"    ,    par4   =    [56    , 622   ,   (6    , 2  ,   5 ,  0)  ,    (   5   ,    5   ,     7    ,   8)    ,    70   ,  \"\\\"(\\\",)[,{,]}\\\"\" ]):"),
                     Line::new(2, "    print(f\"{p1} is not equal to {param__2}\")"),
@@ -1633,6 +1859,7 @@ mod tests {
                     "param1".to_string(), 
                     "param2=5".to_string()
                 ], 
+                functions: vec![], 
                 source: vec![
                     Line::new(1, "def function(param1, param2=5):"), 
                     Line::new(2, "    print(param1, param2)"), 
@@ -1680,8 +1907,9 @@ mod tests {
         
         let function_name_want: String = "function".to_string();
         let function_parameters_want: Vec<String> = vec!["param1".to_string(), "param2=5".to_string()];
+        let function_functions_want: Vec<Function> = Vec::new();
         let function_source_want: Vec<Line> = remove_empty_lines(lines);
-        let function_want: Function = Function {name: function_name_want, parameters: function_parameters_want, source: function_source_want};
+        let function_want: Function = Function {name: function_name_want, parameters: function_parameters_want, functions: function_functions_want, source: function_source_want};
         assert_eq!(function, function_want);
     }
     
@@ -1691,7 +1919,8 @@ mod tests {
             "test/mypy_gclogger.py", 
             "test/recursive_classes.py", 
             "test/function_in_middle_of_file_no_newline.py", 
-            "test/class_in_middle_of_file_no_newline.py"
+            "test/class_in_middle_of_file_no_newline.py", 
+            "test/recursive_functions.py", 
         ];
         
         let expected_results: Vec<File> = vec![
@@ -1703,6 +1932,7 @@ mod tests {
                     Function {
                         name: "random_function".to_string(), 
                         parameters: vec!["param1".to_string(), "p2".to_string(), "p3".to_string(), "p4".to_string(), "p5=3".to_string(), "p6=78.5".to_string(), "p7=[(5, 6), (94, 45), \"Banana Shrine\"]".to_string()], 
+                        functions: vec![], 
                         source: vec![
                             Line::new(13, "def random_function(param1, p2, p3, p4, p5=3, p6 = 78.5,    p7  =    [  (5,  6)   ,   ( 94 , 45 ) , \"Banana Shrine\"] ):"),
                             Line::new(14, "    print(\"hihi\")"),
@@ -1727,6 +1957,7 @@ mod tests {
                             Function {
                                 name: "__enter__".to_string(), 
                                 parameters: vec!["self".to_string()], 
+                                functions: vec![], 
                                 source: vec![
                                     Line::new(29, "    def __enter__(self) -> GcLogger:"),
                                     Line::new(30, "        self.gc_start_time: float | None = None"),
@@ -1742,6 +1973,7 @@ mod tests {
                             Function {
                                 name: "gc_callback".to_string(), 
                                 parameters: vec!["self".to_string(), "phase: str".to_string(), "info: Mapping[str, int]".to_string()], 
+                                functions: vec![], 
                                 source: vec![
                                     Line::new(39, "    def gc_callback(self, phase: str, info: Mapping[str, int]) -> None:"),
                                     Line::new(40, "        if phase == \"start\":"),
@@ -1761,6 +1993,7 @@ mod tests {
                             Function {
                                 name: "__exit__".to_string(), 
                                 parameters: vec!["self".to_string(), "*args: object".to_string()], 
+                                functions: vec![], 
                                 source: vec![
                                         Line::new(53, "    def __exit__(self, *args: object) -> None:"),
                                         Line::new(54, "        while self.gc_callback in gc.callbacks:"),
@@ -1770,6 +2003,7 @@ mod tests {
                             Function {
                                 name: "get_stats".to_string(), 
                                 parameters: vec!["self".to_string()], 
+                                functions: vec![], 
                                 source: vec![
                                         Line::new(57, "    def get_stats(self) -> Mapping[str, float]:"),
                                         Line::new(58, "        end_time = time.time()"),
@@ -1795,6 +2029,7 @@ mod tests {
                     Function {
                         name: "main".to_string(), 
                         parameters: vec![], 
+                        functions: vec![], 
                         source: vec![
                             Line::new(40, "def main():"), 
                             Line::new(41, "    upper = UpperClass(5, 6)")
@@ -1812,6 +2047,17 @@ mod tests {
                             Function {
                                 name: "__init__".to_string(), 
                                 parameters: vec!["self".to_string(), "a".to_string(), "b".to_string()], 
+                                functions: vec![
+                                    Function {
+                                        name: "define_c".to_string(), 
+                                        parameters: vec![], 
+                                        functions: vec![], 
+                                        source: vec![
+                                            Line::new(30, "        def define_c():"), 
+                                            Line::new(31, "            self.c = 5"), 
+                                        ]
+                                    }
+                                ], 
                                 source: vec![
                                     Line::new(29, "    def __init__(self, a, b):"),
                                     Line::new(30, "        def define_c():"),
@@ -1824,6 +2070,7 @@ mod tests {
                             Function {
                                 name: "print".to_string(), 
                                 parameters: vec!["self".to_string()], 
+                                functions: vec![], 
                                 source: vec![
                                     Line::new(37, "    def print(self):"), 
                                     Line::new(38, "        print(self.a, self.b, self.c)")
@@ -1839,6 +2086,7 @@ mod tests {
                                     Function {
                                         name: "__init__".to_string(), 
                                         parameters: vec!["self".to_string()], 
+                                        functions: vec![], 
                                         source: vec![
                                             Line::new(9, "        def __init__(self):"), 
                                             Line::new(10, "            self.width = 5"), 
@@ -1848,6 +2096,7 @@ mod tests {
                                     Function {
                                         name: "get_width".to_string(), 
                                         parameters: vec!["self".to_string(), "pineapple=25".to_string()], 
+                                        functions: vec![], 
                                         source: vec![
                                             Line::new(26, "        def get_width(self, pineapple=25):"),
                                             Line::new(27, "            return self.width")
@@ -1866,6 +2115,7 @@ mod tests {
                                             Function {
                                                 name: "__init__".to_string(), 
                                                 parameters: vec!["self".to_string(), "banana".to_string(), "apple".to_string()], 
+                                                functions: vec![], 
                                                 source: vec![
                                                     Line::new(18, "            def __init__(self, banana, apple):"),
                                                     Line::new(19, "                self.banana = banana"),
@@ -1876,6 +2126,7 @@ mod tests {
                                             Function {
                                                 name: "pear".to_string(), 
                                                 parameters: vec!["self".to_string(), "orange".to_string()], 
+                                                functions: vec![], 
                                                 source: vec![
                                                     Line::new(23, "            def pear(self, orange):"), 
                                                     Line::new(24, "                return self.apple * self.banana * orange")
@@ -1898,6 +2149,7 @@ mod tests {
                     Function {
                         name: "some_func".to_string(), 
                         parameters: vec!["p1".to_string(), "p2".to_string()], 
+                        functions: vec![], 
                         source: vec![
                             Line::new(3, "def some_func( p1 , p2 ) :"), 
                             Line::new(4, "    print( \"Mango\" )"), 
@@ -1906,6 +2158,7 @@ mod tests {
                     Function {
                         name: "some_other_func".to_string(), 
                         parameters: vec!["p3".to_string(), "p4".to_string()], 
+                        functions: vec![], 
                         source: vec![
                             Line::new(5, "def some_other_func( p3, p4 ):"), 
                             Line::new(6, "    for i in range(10):"), 
@@ -1924,6 +2177,7 @@ mod tests {
                     Function {
                         name: "main".to_string(), 
                         parameters: vec!["fruit_size".to_string()], 
+                        functions: vec![], 
                         source: vec![
                             Line::new(19, "def main(fruit_size):"), 
                             Line::new(20, "    fruit = Mango(fruit_size)")
@@ -1941,6 +2195,7 @@ mod tests {
                             Function {
                                 name: "__init__".to_string(), 
                                 parameters: vec!["self".to_string(), "size".to_string()], 
+                                functions: vec![], 
                                 source: vec![
                                     Line::new(10, "    def __init__(self, size):"), 
                                     Line::new(11, "        super().__init__(\"Mango\")"), 
@@ -1950,6 +2205,7 @@ mod tests {
                             Function {
                                 name: "get_size".to_string(), 
                                 parameters: vec!["self".to_string()], 
+                                functions: vec![], 
                                 source: vec![
                                     Line::new(14, "    def get_size(self):"), 
                                     Line::new(15, "        return self.size")
@@ -1958,6 +2214,7 @@ mod tests {
                             Function {
                                 name: "print_size".to_string(), 
                                 parameters: vec!["self".to_string()], 
+                                functions: vec![], 
                                 source: vec![
                                     Line::new(17, "    def print_size(self):"), 
                                     Line::new(18, "        print(f\"Fruit size is: {self.size}\")")
@@ -1968,6 +2225,93 @@ mod tests {
                     }
                 ] // end of classes
             }, // end of file
+            File {
+                name: "recursive_functions".to_string(), 
+                imports: vec!["math".to_string()], 
+                global_variables: vec![], 
+                functions: vec![
+                    Function {
+                        name: "sqrt_bulk".to_string(), 
+                        parameters: vec!["numbers".to_string()], 
+                        functions: vec![
+                            Function {
+                                name: "sqrt".to_string(), 
+                                parameters: vec!["x".to_string()], 
+                                functions: vec![], 
+                                source: vec![
+                                    Line::new(4, "    def sqrt(x):"),
+                                    Line::new(5, "        return math.sqrt(x)"),
+                                ]
+                            }
+                        ], // end of functions
+                        source: vec![
+                            Line::new(3, "def sqrt_bulk(numbers):"),
+                            Line::new(4, "    def sqrt(x):"),
+                            Line::new(5, "        return math.sqrt(x)"),
+                            Line::new(7, "    for n in numbers:"),
+                            Line::new(8, "        yield sqrt(n)"),
+                        ]
+                    }, 
+                    Function {
+                        name: "cube_bulk".to_string(), 
+                        parameters: vec!["numbers".to_string()], 
+                        functions: vec![
+                            Function {
+                                name: "cube".to_string(), 
+                                parameters: vec!["x".to_string()], 
+                                functions: vec![
+                                    Function {
+                                        name: "square".to_string(), 
+                                        parameters: vec!["x".to_string()], 
+                                        functions: vec![], 
+                                        source: vec![
+                                            Line::new(12, "        def square(x):"),
+                                            Line::new(13, "            return x * x"),
+                                        ]
+                                    }
+                                ], // end of functions
+                                source: vec![
+                                    Line::new(11, "    def cube(x):"),
+                                    Line::new(12, "        def square(x):"),
+                                    Line::new(13, "            return x * x"),
+                                    Line::new(14, "        return square(x) * x"),
+                                ]
+                            }
+                        ], // end of functions
+                        source: vec![
+                            Line::new(10, "def cube_bulk(numbers):"),
+                            Line::new(11, "    def cube(x):"),
+                            Line::new(12, "        def square(x):"),
+                            Line::new(13, "            return x * x"),
+                            Line::new(14, "        return square(x) * x"),
+                            Line::new(16, "    for n in numbers:"),
+                            Line::new(17, "        yield cube(n)"),
+                        ]
+                    }, 
+                    Function {
+                        name: "main".to_string(), 
+                        parameters: vec![], 
+                        functions: vec![], 
+                        source: vec![
+                            Line::new(19, "def main():"),
+                            Line::new(20, "    print(\"Input 'q' to start calculating.\")"),
+                            Line::new(21, "    numbers = []"),
+                            Line::new(22, "    while True:"),
+                            Line::new(23, "        inp = input()"),
+                            Line::new(24, "        if inp == \"q\":"),
+                            Line::new(25, "            break"),
+                            Line::new(26, "        try:"),
+                            Line::new(27, "            n = int(inp)"),
+                            Line::new(28, "            numbers.append(n)"),
+                            Line::new(29, "        except ValueError as e:"),
+                            Line::new(30, "            print(f\"Cannot cast '{inp}' to int.\")"),
+                            Line::new(32, "    for n, result in zip(numbers, cube_bulk(numbers)):"),
+                            Line::new(33, "        print(f\"{n}**3 = {result}\")"),
+                        ]
+                    }
+                ], // end of functions
+                classes: vec![] // end of classes
+            } // end of file
         ]; // end of files
         
         // Read lines from files and create File objects from them, then compare the File objects to the File objects in the vector above.
