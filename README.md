@@ -124,3 +124,6 @@ I finally found the bug! I hadn't implemented the functions vector into the Part
 
 12.54<br />
 I have implemented tests to check if the partialeq implementations work correctly. This should make the bug from yesterday impossible to occur without triggering a test failure.
+
+17.34<br />
+Recursive functions/subfunctions are now implemented as well as methods for converting structs to strings for each custom struct.

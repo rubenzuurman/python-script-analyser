@@ -136,6 +136,25 @@ impl Line {
         }
     }
     
+    pub fn as_string(&self, indentation_length: usize) -> String {
+        // Set up indentation.
+        let v: Vec<char> = vec![' '; indentation_length];
+        let s: String = v.iter().collect();
+        let spaces: &str = s.as_str();
+        
+        // Set up space before number after "Line".
+        let line_space: &str = match self.number {
+            n if n >= 1000 => " ", 
+            n if n >= 100  => "  ", 
+            n if n >= 10   => "   ", 
+            n if n >= 1    => "    ", 
+            _              => "    "
+        };
+        
+        // Build string.
+        return format!("{}Line{}{}: {}", spaces, line_space, self.get_number(), self.get_text());
+    }
+    
 }
 
 impl std::fmt::Display for Line {
@@ -149,7 +168,7 @@ impl std::fmt::Display for Line {
             _              => "    "
         };
         
-        print!("Line{}{}: {}", line_space, self.number, self.text);
+        print!("Line{}{}: {}", line_space, self.get_number(), self.get_text());
         return Ok(());
     }
     
@@ -227,6 +246,16 @@ impl Assignment {
     
     pub fn get_source(&self) -> &Line {
         return &self.source;
+    }
+    
+    pub fn as_string(&self, indentation_length: usize) -> String {
+        // Set up indentation.
+        let v: Vec<char> = vec![' '; indentation_length];
+        let s: String = v.iter().collect();
+        let spaces: &str = s.as_str();
+        
+        // Build string.
+        return format!("{}Assignment({} = {})\n", spaces, self.get_name(), self.get_value());
     }
     
 }
@@ -400,7 +429,7 @@ impl File {
             // Detect functions.
             match File::line_is_function_start(&line) {
                 Some(_) => {
-                    // Set in function variables.
+                    // Start function tracker.
                     function_tracker.start();
                     function_tracker.add_line(&line);
                 }, 
@@ -410,7 +439,7 @@ impl File {
             // Detect classes.
             match File::line_is_class_start(&line) {
                 Some(_) => {
-                    // Set in class variables.
+                    // Start class tracker.
                     class_tracker.start();
                     class_tracker.add_line(&line);
                 }, 
@@ -569,33 +598,57 @@ impl File {
         return &self.classes;
     }
     
-}
-
-impl std::fmt::Display for File {
-    
-    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        println!("File {{");
-        println!("    name: {}", self.get_name());
-        println!("    imports: {:?}", self.get_imports());
-        println!("    global variables: {:?}", self.get_global_variables());
-        println!("    functions: [");
-        for function in self.get_functions() {
-            for line in format!("{}", function).split("\n") {
-                println!("        {}", line);
-            }
-        }
-        println!("    ]");
-        println!("    classes: [");
-        for class in self.get_classes() {
-            for line in format!("{}", class).split("\n") {
-                println!("        {}", line);
-            }
-        }
-        println!("    ]");
-        println!("}}");
+    pub fn as_string(&self, indentation_length: usize) -> String {
+        // Set up indentation.
+        let v: Vec<char> = vec![' '; indentation_length];
+        let s: String = v.iter().collect();
+        let spaces: &str = s.as_str();
+        let spaces_extra_tab: &str = &(spaces.to_owned() + "    ");
         
+        // Build string.
+        let mut string: String = "".to_string();
         
-        return Ok(());
+        // Push name and imports.
+        string.push_str(format!("{}File [\n", spaces).as_str());
+        string.push_str(format!("{}name: {}\n", spaces_extra_tab, self.get_name()).as_str());
+        string.push_str(format!("{}imports: {:?}\n", spaces_extra_tab, self.get_imports()).as_str());
+        
+        // Push global variables.
+        if self.get_global_variables().len() > 0{
+            string.push_str(format!("{}global variables [\n", spaces_extra_tab).as_str());
+            for global_var in self.get_global_variables() {
+                string.push_str(format!("{}    {}\n", spaces_extra_tab, global_var).as_str());
+            }
+            string.push_str(format!("{}]\n", spaces_extra_tab).as_str());
+        } else {
+            string.push_str(format!("{}global variables []\n", spaces_extra_tab).as_str());
+        }
+        
+        // Push functions.
+        if self.get_functions().len() > 0 {
+            string.push_str(format!("{}functions [\n", spaces_extra_tab).as_str());
+            for function in self.get_functions() {
+                string.push_str(function.as_string(indentation_length + 8).as_str());
+            }
+            string.push_str(format!("{}]\n", spaces_extra_tab).as_str());
+        } else {
+            string.push_str(format!("{}functions []\n", spaces_extra_tab).as_str());
+        }
+        
+        // Push classes.
+        if self.get_classes().len() > 0 {
+            string.push_str(format!("{}classes [\n", spaces_extra_tab).as_str());
+            for class in self.get_classes() {
+                string.push_str(class.as_string(indentation_length + 8).as_str());
+            }
+            string.push_str(format!("{}]\n", spaces_extra_tab).as_str());
+        } else {
+            string.push_str(format!("{}classes []\n", spaces_extra_tab).as_str());
+        }
+        
+        string.push_str(format!("{}]\n", spaces).as_str());
+        
+        return string;
     }
     
 }
@@ -806,11 +859,66 @@ impl Function {
             parameters.remove(*index);
         }
         
+        // Initialize function tracker.
+        let mut function_tracker: StructureTracker = StructureTracker::new();
+        
+        // Iterate over lines and detect function start.
+        let mut functions: Vec<Function> = Vec::new();
+        for (index, line) in source.iter().enumerate() {
+            // Check if currently in a function.
+            let indentation_length = File::get_indentation_length(line);
+            if function_tracker.is_active() {
+                if !function_tracker.indentation_set() {
+                    // Indentation length not set, set indentation length and add line.
+                    function_tracker.set_indentation_length(indentation_length);
+                    function_tracker.add_line(&line);
+                } else {
+                    // Indentation length set.
+                    if indentation_length >= function_tracker.get_indentation_length() {
+                        // Not end of function, add line.
+                        function_tracker.add_line(&line);
+                    } else {
+                        // End of function, create and push function.
+                        let function: Function = Function::new(function_tracker.get_source());
+                        functions.push(function);
+                        // Reset tracker.
+                        function_tracker.reset();
+                    }
+                }
+            }
+            
+            if function_tracker.is_active() {
+                continue;
+            }
+            
+            // Detect function start.
+            match File::line_is_function_start(&line) {
+                Some(_) => {
+                    // Check if this is the first line of the function.
+                    if index == 0 {
+                        continue;
+                    }
+                    
+                    // Start function tracker.
+                    function_tracker.start();
+                    function_tracker.add_line(&line);
+                }, 
+                None => ()
+            }
+        }
+        
+        // Check if the function tracker is still active.
+        if function_tracker.is_active() {
+            // End of function, create and push function.
+            let function: Function = Function::new(function_tracker.get_source());
+            functions.push(function);
+        }
+        
         // Return function object.
         return Function {
             name: name, 
             parameters: parameters, 
-            functions: Vec::new(), 
+            functions: functions, 
             source: source.to_vec()
         };
     }
@@ -840,29 +948,46 @@ impl Function {
         return &self.source;
     }
     
-}
-
-impl std::fmt::Display for Function {
-    
-    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        println!("Function {{");
-        println!("    name: {}, ", self.get_name());
-        println!("    parameters: {:?}", self.get_parameters());
-        println!("    functions: [");
-        for function in self.get_functions() {
-            for line in function.get_source() {
-                println!("        {} ", line);
-            }
-        }
-        println!("    ]");
-        println!("    source: [");
-        for line in self.get_source() {
-            println!("        {}", line);
-        }
-        println!("    ]");
-        println!("}}");
+    pub fn as_string(&self, indentation_length: usize) -> String {
+        // Set up indentation.
+        let v: Vec<char> = vec![' '; indentation_length];
+        let s: String = v.iter().collect();
+        let spaces: &str = s.as_str();
+        let spaces_extra_tab: &str = &(spaces.to_owned() + "    ");
         
-        return Ok(());
+        // Build string.
+        let mut string: String = "".to_string();
+        
+        // Push name and parameters.
+        string.push_str(format!("{}Function [\n", spaces).as_str());
+        string.push_str(format!("{}name: {}\n", spaces_extra_tab, self.get_name()).as_str());
+        string.push_str(format!("{}parameters: {:?}\n", spaces_extra_tab, self.get_parameters()).as_str());
+        
+        // Push functions.
+        if self.get_functions().len() > 0 {
+            string.push_str(format!("{}functions: [\n", spaces_extra_tab).as_str());
+            for function in self.get_functions() {
+                string.push_str(format!("{}", function.as_string(indentation_length + 8)).as_str());
+            }
+            string.push_str(format!("{}]\n", spaces_extra_tab).as_str());
+        } else {
+            string.push_str(format!("{}functions: []\n", spaces_extra_tab).as_str());
+        }
+        
+        // Push source.
+        if self.get_source().len() > 0 {
+            string.push_str(format!("{}source [\n", spaces_extra_tab).as_str());
+            for line in self.get_source() {
+                string.push_str(format!("{}\n", line.as_string(indentation_length + 8)).as_str());
+            }
+            string.push_str(format!("{}]\n", spaces_extra_tab).as_str());
+        } else {
+            string.push_str(format!("{}source []\n", spaces_extra_tab).as_str());
+        }
+        
+        string.push_str(format!("{}]\n", spaces).as_str());
+        
+        return string;
     }
     
 }
@@ -1124,32 +1249,57 @@ impl Class {
         return lines;
     }
     
-}
-
-impl std::fmt::Display for Class {
-    
-    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        println!("Class {{");
-        println!("    name: {}", self.get_name());
-        println!("    parent: {:?}", self.get_parent());
-        println!("    variables: {:?}", self.get_variables());
-        println!("    functions: [");
-        for function in self.get_methods() {
-            for line in function.get_source() {
-                println!("        {}", line);
-            }
-        }
-        println!("    ]");
-        println!("    classes: [");
-        for class in self.get_classes() {
-            for line in class.get_source() {
-                println!("        {}", line);
-            }
-        }
-        println!("    ]");
-        println!("}}");
+    pub fn as_string(&self, indentation_length: usize) -> String {
+        // Set up indentation.
+        let v: Vec<char> = vec![' '; indentation_length];
+        let s: String = v.iter().collect();
+        let spaces: &str = s.as_str();
+        let spaces_extra_tab: &str = &(spaces.to_owned() + "    ");
+                
+        // Build string.
+        let mut string: String = "".to_string();
         
-        return Ok(());
+        // Push name and parent.
+        string.push_str(format!("{}Class [\n", spaces).as_str());
+        string.push_str(format!("{}name: {}\n", spaces_extra_tab, self.get_name()).as_str());
+        string.push_str(format!("{}parent: {}\n", spaces_extra_tab, self.get_parent()).as_str());
+        
+        // Push variables.
+        if self.get_variables().len() > 0 {
+            string.push_str(format!("{}variables [\n", spaces_extra_tab).as_str());
+            for assignment in self.get_variables() {
+                string.push_str(assignment.as_string(indentation_length + 8).as_str());
+            }
+            string.push_str(format!("{}]\n", spaces_extra_tab).as_str());
+        } else {
+            string.push_str(format!("{}variables []\n", spaces_extra_tab).as_str());
+        }
+        
+        // Push methods.
+        if self.get_methods().len() > 0 {
+            string.push_str(format!("{}methods [\n", spaces_extra_tab).as_str());
+            for method in self.get_methods() {
+                string.push_str(method.as_string(indentation_length + 8).as_str());
+            }
+            string.push_str(format!("{}]\n", spaces_extra_tab).as_str());
+        } else {
+            string.push_str(format!("{}methods []\n", spaces_extra_tab).as_str());
+        }
+        
+        // Push classes.
+        if self.get_classes().len() > 0 {
+            string.push_str(format!("{}classes [\n", spaces_extra_tab).as_str());
+            for class in self.get_classes() {
+                string.push_str(class.as_string(indentation_length + 8).as_str());
+            }
+            string.push_str(format!("{}]\n", spaces_extra_tab).as_str());
+        } else {
+            string.push_str(format!("{}classes []\n", spaces_extra_tab).as_str());
+        }
+        
+        string.push_str(format!("{}]\n", spaces).as_str());
+        
+        return string;
     }
     
 }

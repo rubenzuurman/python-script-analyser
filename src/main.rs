@@ -27,23 +27,9 @@ fn main() {
     
     // TODO: Do one pass over lines to check for indentation inconsistencies.
     
+    // Handle file.
     let file: File = File::new(filename, &vec_str_to_vec_line(&lines));
     
     // Print file data.
-    println!("Imports: {:?}", file.get_imports());
-    println!("Global variables: {:?}", file.get_global_variables());
-    for function in file.get_functions() {
-        /*println!("\nFunction source '{}':", function.get_name());
-        for line in function.get_source() {
-            println!("{}", line);
-        }
-        println!("Function parameters '{}': '{:?}'", function.get_name(), function.get_parameters());*/
-        println!("{}", function);
-    }
-    for class in file.get_classes() {
-        println!("\nClass source '{}':", class.get_name());
-        for line in class.get_source() {
-            println!("{}", line);
-        }
-    }
+    println!("{}", file.as_string(0));
 }
