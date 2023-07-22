@@ -330,7 +330,7 @@ impl StructureTracker {
 pub struct File {
     name: String, 
     imports: Vec<String>, 
-    global_variables: Vec<String>, 
+    global_variables: Vec<Assignment>, 
     functions: Vec<Function>, 
     classes: Vec<Class>, 
 }
@@ -354,7 +354,7 @@ impl File {
         
         // Iterate over lines and detect things.
         let mut imports: Vec<String> = Vec::new();
-        let mut global_vars: Vec<String> = Vec::new();
+        let mut global_vars: Vec<Assignment> = Vec::new();
         let mut functions: Vec<Function> = Vec::new();
         let mut classes: Vec<Class> = Vec::new();
         for line in source.iter() {
@@ -420,8 +420,11 @@ impl File {
             
             // Detect global variables.
             match File::line_is_global_var(&line) {
-                Some(a) => {
-                    global_vars.push(a);
+                Some(_) => {
+                    match Assignment::new(line) {
+                        Some(a) => global_vars.push(a), 
+                        None => println!("'{}' should have been an assignment, but wasn't. This is not supposed to happen. (Around lib.rs:426 btw)", line), 
+                    }
                 }, 
                 None => ()
             }
@@ -586,7 +589,7 @@ impl File {
         return &self.imports;
     }
     
-    pub fn get_global_variables(&self) -> &Vec<String> {
+    pub fn get_global_variables(&self) -> &Vec<Assignment> {
         return &self.global_variables;
     }
     
@@ -617,7 +620,7 @@ impl File {
         if self.get_global_variables().len() > 0{
             string.push_str(format!("{}global variables [\n", spaces_extra_tab).as_str());
             for global_var in self.get_global_variables() {
-                string.push_str(format!("{}    {}\n", spaces_extra_tab, global_var).as_str());
+                string.push_str(global_var.as_string(indentation_length + 8).as_str());
             }
             string.push_str(format!("{}]\n", spaces_extra_tab).as_str());
         } else {
@@ -1061,10 +1064,9 @@ impl Class {
             let class_var_captures = re_class_var.captures(line.get_text());
             match class_var_captures {
                 Some(_) => {
-                    let assignment: Option<Assignment> = Assignment::new(line);
-                    match assignment {
-                        Some(b) => variables.push(b), 
-                        None => println!("'{}' should have been an assignment, but wasn't. This is not supposed to happen. (Around lib.rs:661 btw)", line), 
+                    match Assignment::new(line) {
+                        Some(a) => variables.push(a), 
+                        None => println!("'{}' should have been an assignment, but wasn't. This is not supposed to happen. (Around lib.rs:1071 btw)", line), 
                     }
                 }
                 None => continue
@@ -1723,7 +1725,11 @@ mod tests {
         assert_eq!(file_org == file_diff_imports, false);
         
         let mut file_diff_global_variables: File = file_same.clone();
-        file_diff_global_variables.global_variables = vec!["GLOBAL_VARIABLE".to_string(), "SETTING_FPS".to_string(), "SETTING_VSYNC".to_string()];
+        file_diff_global_variables.global_variables = vec![
+            Assignment::new(&Line::new(1, "GLOBAL_VARIABLE = 5")).unwrap(), 
+            Assignment::new(&Line::new(2, "SETTING_FPS = 60")).unwrap(), 
+            Assignment::new(&Line::new(3, "SETTING_VSYNC = 1")).unwrap(), 
+        ];
         assert_eq!(file_org == file_diff_global_variables, false);
         
         let mut file_diff_functions: File = file_same.clone();
@@ -2077,7 +2083,11 @@ mod tests {
             File {
                 name: "mypy_gclogger".to_string(), 
                 imports: vec!["annotations".to_string(), "gc".to_string(), "time".to_string(), "Mapping".to_string()], 
-                global_variables: vec!["GLOB_NAME".to_string(), "GLOB_PARAMETER".to_string(), "GLOB_OBJ".to_string()], 
+                global_variables: vec![
+                    Assignment {name: "GLOB_NAME".to_string(), value: "\"Bananas are pretty good\"".to_string(), source: Line::new(8, "GLOB_NAME = \"Bananas are pretty good\"")}, 
+                    Assignment {name: "GLOB_PARAMETER".to_string(), value: "100 ** 2".to_string(), source: Line::new(9, "GLOB_PARAMETER = 100 ** 2")}, 
+                    Assignment {name: "GLOB_OBJ".to_string(), value: "time.time()".to_string(), source: Line::new(10, "GLOB_OBJ = time.time()")}, 
+                ], 
                 functions: vec![
                     Function {
                         name: "random_function".to_string(), 
@@ -2174,7 +2184,9 @@ mod tests {
             File {
                 name: "recursive_classes".to_string(), 
                 imports: vec!["math".to_string()], 
-                global_variables: vec!["SETTING".to_string()], 
+                global_variables: vec![
+                    Assignment {name: "SETTING".to_string(), value: "math.pow(math.sqrt(2), math.e * math.pi)".to_string(), source: Line::new(3, "SETTING = math.pow(math.sqrt(2), math.e * math.pi)")}
+                ], 
                 functions: vec![
                     Function {
                         name: "main".to_string(), 
@@ -2294,7 +2306,9 @@ mod tests {
             File {
                 name: "function_in_middle_of_file_no_newline".to_string(), 
                 imports: vec!["math".to_string()], 
-                global_variables: vec!["GLOBAL".to_string()], 
+                global_variables: vec![
+                    Assignment {name: "GLOBAL".to_string(), value: "\"Global\"".to_string(), source: Line::new(2, "GLOBAL = \"Global\"")}
+                ], 
                 functions: vec![
                     Function {
                         name: "some_func".to_string(), 
@@ -2322,7 +2336,9 @@ mod tests {
             File {
                 name: "class_in_middle_of_file_no_newline".to_string(), 
                 imports: vec!["math".to_string(), "rnd".to_string(), "listdir".to_string()], 
-                global_variables: vec!["SETTING".to_string()], 
+                global_variables: vec![
+                    Assignment {name: "SETTING".to_string(), value: "\"Banana\"".to_string(), source: Line::new(5, "SETTING = \"Banana\"")}
+                ], 
                 functions: vec![
                     Function {
                         name: "main".to_string(), 

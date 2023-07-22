@@ -113,7 +113,7 @@ I have pushed the changes to the repo. I think the next step is to implement rec
 After that I should probably start implementing printing warnings to the commandline in response to the issues presented at the top of this document under **Goal**.
 
 22.09<br />
-I am now done implementing one test file ,`test/recursive_functions.py`, which contains one double nested function and one triple nested function. I hope that by induction this will guarantee that any degree of nested funtions will work.
+I am now done implementing one test file, `test/recursive_functions.py`, which contains one double nested function and one triple nested function. I hope that by induction this will guarantee that any degree of nested funtions will work.
 
 23.09<br />
 For some weird reason the tests for the recursive functions return positive even though the file structs are not equal, very weird, it's probably me who doesn't understand rust though.
@@ -123,7 +123,14 @@ For some weird reason the tests for the recursive functions return positive even
 I finally found the bug! I hadn't implemented the functions vector into the PartialEq implementation of the Function struct yet.
 
 12.54<br />
-I have implemented tests to check if the partialeq implementations work correctly. This should make the bug from yesterday impossible to occur without triggering a test failure.
+I have implemented tests to check if the PartialEq implementations work correctly. This should make the bug from yesterday impossible to occur without triggering a test failure.
 
 17.34<br />
 Recursive functions/subfunctions are now implemented as well as methods for converting structs to strings for each custom struct.
+
+18.07<br />
+I changed the type of global file variables from String to Assignment.
+
+**22-07-2023**
+12.55<br />
+I did some googling yesterday and I am probably going to use the `cargo-llvm-cov` crate to monitor the test coverage.
