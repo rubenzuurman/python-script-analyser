@@ -326,9 +326,29 @@ impl File {
         let name: &OsStr = path.file_stem().unwrap();
         
         // Print warning if the extension is not 'py'.
-        let extension: &OsStr = path.extension().unwrap();
-        if extension != OsStr::new("py") {
-            eprintln!("WARNING: The input file might not be a python file (extension='{}', not 'py').", extension.to_str().unwrap());
+        match path.extension().and_then(OsStr::to_str) {
+            Some(extension) => {
+                if extension != "py" {
+                    eprintln!("WARNING: The input file might not be a python file (extension='{}', not 'py').", extension);
+                }
+            }, 
+            None => {
+                eprintln!("WARNING: The input file might not be a python file (file has no extension).");
+            }
+        }
+        
+        // Get clone of source.
+        let mut source: Vec<Line> = source.clone();
+        
+        // Remove any empty lines.
+        let mut lines_to_remove: Vec<usize> = Vec::new();
+        for (index, line) in source.iter().enumerate() {
+            if line.get_text().trim().is_empty() {
+                lines_to_remove.push(index);
+            }
+        }
+        for index in lines_to_remove.iter().rev() {
+            source.remove(*index);
         }
         
         // Initialize structure tracker (used for tracking functions and classes).
@@ -341,11 +361,6 @@ impl File {
         let mut functions: Vec<Function> = Vec::new();
         let mut classes: Vec<Class> = Vec::new();
         for line in source.iter() {
-            // Skip empty lines.
-            if line.get_text().trim().is_empty() {
-                continue;
-            }
-            
             // Check if currently in a function or a class.
             let indentation_length = File::get_indentation_length(line);
             if function_tracker.is_active() {
@@ -662,6 +677,20 @@ pub struct Function {
 impl Function {
     
     pub fn new(source: &Vec<Line>) -> Self {
+        // Get clone of source.
+        let mut source: Vec<Line> = source.clone();
+        
+        // Remove empty lines.
+        let mut lines_to_remove: Vec<usize> = Vec::new();
+        for (index, line) in source.iter().enumerate() {
+            if line.get_text().trim().is_empty() {
+                lines_to_remove.push(index);
+            }
+        }
+        for index in lines_to_remove.iter().rev() {
+            source.remove(*index);
+        }
+        
         // Get first line of the source.
         let first_line: &str = source.get(0).unwrap().get_text();
         
@@ -851,11 +880,6 @@ impl Function {
         // Iterate over lines and detect function start.
         let mut functions: Vec<Function> = Vec::new();
         for (index, line) in source.iter().enumerate() {
-            // Skip empty lines.
-            if line.get_text().trim().is_empty() {
-                continue;
-            }
-            
             // Check if currently in a function.
             let indentation_length = File::get_indentation_length(line);
             if function_tracker.is_active() {
@@ -916,7 +940,7 @@ impl Function {
     
     pub fn default() -> Self {
         return Function {
-            name: "name".to_string(), 
+            name: "".to_string(), 
             parameters: Vec::new(), 
             functions: Vec::new(), 
             source: Vec::new()
@@ -1026,19 +1050,19 @@ impl Class {
         // Initialize regex for getting the class name when no parent class/a parent class is present.
         let re_class_start = Regex::new(PATTERN_CLASS_START).unwrap();
         
-        // Initialize class properties.
-        let mut name: String = "".to_string();
-        let mut parent: String = "".to_string();
-        
-        // Check if this class has a parent class and get name and parent.
+        // Initialize class properties, check if this class has a parent class and get name and parent.
         let class_start_capt = re_class_start.captures(&first_line);
-        match class_start_capt {
+        let (name, parent): (String, String) = match class_start_capt {
             Some(a) => {
-                name = a.name("name").unwrap().as_str().to_string();
-                parent = a.name("parent").map(|m| m.as_str()).unwrap_or("").to_string();
+                let name: String = a.name("name").unwrap().as_str().to_string();
+                let parent: String = a.name("parent").map(|m| m.as_str()).unwrap_or("").to_string();
+                (name, parent)
             }, 
-            None => ()
-        }
+            None => {
+                eprintln!("Invalid class definition on the first line of the source '{}'.", first_line);
+                return Class::default();
+            }
+        };
         
         // Scan source for static variables.
         // Get indentation length from second line (empty lines are not present). The indentation pattern will always match.
@@ -1075,11 +1099,6 @@ impl Class {
         
         // Scan source for class methods.
         for (index, line) in source.iter().enumerate() {
-            // Skip empty lines.
-            if line.get_text().trim().is_empty() {
-                continue;
-            }
-            
             // Get indentation length.
             let indentation_length: usize = File::get_indentation_length(line);
             if method_tracker.is_active() {
@@ -1175,6 +1194,16 @@ impl Class {
             variables: variables, 
             methods: methods, 
             classes: classes
+        };
+    }
+    
+    pub fn default() -> Self {
+        return Class {
+            name: "".to_string(), 
+            parent: "".to_string(), 
+            variables: Vec::new(), 
+            methods: Vec::new(), 
+            classes: Vec::new()
         };
     }
     
@@ -1350,6 +1379,173 @@ mod tests {
     use super::*;
     
     use std::collections::HashMap;
+    
+    #[test]
+    fn test_get_file_lines() {
+        let filenames: Vec<&str> = vec![
+            "test/create_function.py", 
+            "test/blablabla_not_a_file.extension", 
+            "test/create_class_typo.py", 
+            "test/some_folder/some_non_existent_file.nothing", 
+        ];
+        
+        let expected_results: Vec<Result<Vec<String>, std::io::Error>> = vec![
+            Ok(vec![
+                "def func_name(param1, param2, param3=5, *args, **kwargs):".to_string(), 
+                "    Appel".to_string(), 
+                "    for i in range(100):".to_string(), 
+                "        print(i + 5 * 10)".to_string(), 
+                "        if i % 5 == 0:".to_string(), 
+                "            print(f\"{i} is divisible by 5\")".to_string(), 
+                "        else:".to_string(), 
+                "            print(\"no\")".to_string(), 
+                "            if i % 7 == 0:".to_string(), 
+                "                print(f\"{i} is divisible by 7\")".to_string(), 
+                "    ".to_string(), 
+                "    Banaan".to_string(), 
+            ]), 
+            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "File does not exist.")), 
+            Ok(vec![
+                "# Used to test when the class definition does not match in the Class::new() method.".to_string(), 
+                "cass Triangle(Shape):".to_string(), 
+                "    ".to_string(), 
+                "    pass".to_string(), 
+            ]), 
+            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "File does not exist.")), 
+        ];
+        
+        for (filename, expected_result) in std::iter::zip(filenames, expected_results) {
+            // Read file.
+            let file_contents: Result<Vec<String>, std::io::Error> = get_file_lines(filename);
+            
+            // Assert equality.
+            match file_contents {
+                Ok(contents) => {
+                    match expected_result {
+                        Ok(result) => assert_eq!(contents, result), 
+                        Err(e) => {
+                            eprintln!("Error '{}' produced while expecting result from file '{}'.", e, filename);
+                            assert_eq!(true, false);
+                        }, 
+                    }
+                }, 
+                Err(e) => {
+                    match expected_result {
+                        Ok(_) => {
+                            eprintln!("Expected error but got a valid result from file '{}'.", filename);
+                            assert_eq!(true, false);
+                        }, 
+                        Err(e2) => assert_eq!(e.kind(), e2.kind()), 
+                    }
+                }
+            }
+        }
+    }
+    
+    #[test]
+    fn test_get_lines_for_test() {
+        let filenames: Vec<&str> = vec![
+            "test/create_class.py", 
+        ];
+        
+        let expected_results: Vec<Vec<String>> = vec![
+            vec![
+                "class Rect(Shape):  ".to_string(), 
+                "".to_string(), 
+                "    STATIC_A = 5".to_string(), 
+                "    ".to_string(), 
+                "    def __init__(self, a=STATIC_A, b=5):".to_string(), 
+                "        self.a=a".to_string(), 
+                "        self.b=b+1".to_string(), 
+                "    ".to_string(), 
+                "    STATIC_B=6     ".to_string(), 
+                "    ANOTHER_STATIC     =     5         ".to_string(), 
+                "    ".to_string(), 
+                "    def func2(self, a, b, c=2):  ".to_string(), 
+                "        self.c = self.a * a + self.b * b + c".to_string(), 
+                "        print(\"Banana\")".to_string(), 
+                "".to_string(), 
+                "    MORE_STATIC=\"Static string\"".to_string(), 
+            ], 
+        ];
+        
+        for (filename, expected_result) in std::iter::zip(filenames, expected_results) {
+            assert_eq!(get_lines_for_test(filename), expected_result);
+        }
+    }
+    
+    #[test]
+    fn test_vec_str_to_vec_line() {
+        let inputs: Vec<Vec<String>> = vec![
+            vec![
+                "line number one".to_string(), 
+                "some text".to_string(), 
+                "    some thing".to_string(), 
+                "some More text".to_string(), 
+            ], 
+            get_lines_for_test("test/file_as_string.py"), 
+        ];
+        
+        let results: Vec<Vec<Line>> = vec![
+            vec![
+                Line::new(1, "line number one"), 
+                Line::new(2, "some text"), 
+                Line::new(3, "    some thing"), 
+                Line::new(4, "some More text"), 
+            ], 
+            vec![
+                Line::new(1, "import math, random as rnd"), 
+                Line::new(2, "from os import listdir"), 
+                Line::new(3, "from fruits import apple as a, banana as b, mango as m"), 
+                Line::new(4, ""), 
+                Line::new(5, "FPS = 60"), 
+                Line::new(6, "VSYNC = True"), 
+                Line::new(7, ""), 
+                Line::new(8, "class Rect:"), 
+                Line::new(9, "    "), 
+                Line::new(10, "    def __init__(self, a):"), 
+                Line::new(11, "        self.a = a"), 
+                Line::new(12, ""), 
+                Line::new(13, "def function(p1, p2='5'):"), 
+                Line::new(14, "    print(p1, p2)"), 
+                Line::new(15, ""), 
+                Line::new(16, "if __name__ == \"__main__\":"), 
+                Line::new(17, "    function(Rect(a))"), 
+            ]
+        ];
+        
+        for (input, result) in std::iter::zip(inputs, results) {
+            assert_eq!(vec_str_to_vec_line(&input), result);
+        }
+    }
+    
+    #[test]
+    fn test_remove_empty_lines() {
+        let inputs: Vec<Vec<Line>> = vec![
+            vec_str_to_vec_line(&get_lines_for_test("test/file_as_string.py")), 
+        ];
+        
+        let results: Vec<Vec<Line>> = vec![
+            vec![
+                Line::new(1, "import math, random as rnd"),
+                Line::new(2, "from os import listdir"),
+                Line::new(3, "from fruits import apple as a, banana as b, mango as m"),
+                Line::new(5, "FPS = 60"),
+                Line::new(6, "VSYNC = True"),
+                Line::new(8, "class Rect:"),
+                Line::new(10, "    def __init__(self, a):"),
+                Line::new(11, "        self.a = a"),
+                Line::new(13, "def function(p1, p2='5'):"),
+                Line::new(14, "    print(p1, p2)"),
+                Line::new(16, "if __name__ == \"__main__\":"),
+                Line::new(17, "    function(Rect(a))")
+            ], 
+        ];
+        
+        for (input, result) in std::iter::zip(inputs, results) {
+            assert_eq!(remove_empty_lines(input), result);
+        }
+    }
     
     #[test]
     fn test_regex_pattern_indentation() {
@@ -2295,7 +2491,7 @@ mod tests {
                 ]
             }, 
             Function {
-                name: "name".to_string(), 
+                name: "".to_string(), 
                 parameters: vec![], 
                 functions: vec![], 
                 source: vec![], 

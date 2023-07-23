@@ -1,6 +1,5 @@
 Tests:
  ☐ Add tests for get methods of structs. @created(23-07-21 17:44)
- ☐ Add tests to verify that the filepath passed to the File::new() method is actually a path to avoid panicking. @created(23-07-23 13:39)
  ☐ Add tests to check that regex patterns do not match when they should not match. @created(23-07-23 19:04)
 
 Misc:
@@ -17,12 +16,13 @@ Misc:
    '        'ComplexWarning', 'TooHardError', 'AxisError']'
  ☐ Change from looping over characters to looping over grapheme clusters where applicable. @created(23-07-20 16:24)
  ☐ Change unwraps to expects to avoid panicking without any description. @created(23-07-23 13:22)
- ☐ Remove empty lines at the start of File::new(), Class::new(), and Function::new(), or rework them all to check for empty lines in the source lines loop. @created(23-07-23 19:36)
- ☐ Change name and parent match to a let match statement in Class::new(). @created(23-07-23 19:37)
- ☐ Implement Class::default() method and implement return default() class if the class definition does not match. @created(23-07-23 19:38)
 
 ＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿
 Archive:
+ ✔ Remove empty lines at the start of File::new(), Class::new(), and Function::new(), or rework them all to check for empty lines in the source lines loop. (I chose to remove empty lines at the start of the constructor methods.) @created(23-07-23 19:36) @done (23-07-23 20:39) @project(Misc)
+ ✔ Implement Class::default() method and implement return default() class if the class definition does not match. @created(23-07-23 19:38) @done (23-07-23 20:31) @project(Misc)
+ ✔ Change name and parent match to a let match statement in Class::new(). @created(23-07-23 19:37) @done (23-07-23 20:31) @project(Misc)
+ ✔ Add tests to verify that the filepath passed to the File::new() method is actually a path to avoid panicking. (I matched the extension instead.) @created(23-07-23 13:39) @done (23-07-23 20:23) @project(Tests)
  ✔ Change global variables in file from String to Assignment. @created(23-07-21 17:44) @done (23-07-21 18:06) @project(Tests)
  ✔ Create struct method Function::default() after merging Function and ClassMethod, used for handling error cases in the Function struct a little bit cleaner. @created(23-07-17 16:26) @done (23-07-21 17:41) @project(Misc)
  ✔ Fix bug where a function parameter of '  p5=3  ' gets changed to 'p5=3', but '    p5  =    3   ' gets changed to 'p5 = 3' (in Function::create). @created(23-07-17 11:04) @done (23-07-20 16:46) @project(Misc)
