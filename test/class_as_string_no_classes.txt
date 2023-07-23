@@ -1,0 +1,36 @@
+Class [
+    name: Banana
+    parent: Fruit, Yellow, object
+    variables [
+        Assignment(CLASS_VAR_1 = "500 is not equal to 100")
+        Assignment(SETTING = True)
+    ]
+    methods [
+        Function [
+            name: __init__
+            parameters: ["self", "size"]
+            functions [
+                Function [
+                    name: sub_func
+                    parameters: ["a", "b"]
+                    functions []
+                    source [
+                        Line   12:         def sub_func(a, b):
+                        Line   13:             self.sub_func_ran = True
+                        Line   14:             return a * b + 5
+                    ]
+                ]
+            ]
+            source [
+                Line    8:     def __init__(self, size):
+                Line    9:         super().__init__()
+                Line   10:         self.sub_func_ran = False
+                Line   12:         def sub_func(a, b):
+                Line   13:             self.sub_func_ran = True
+                Line   14:             return a * b + 5
+                Line   16:         self.size = size
+            ]
+        ]
+    ]
+    classes []
+]

@@ -1,0 +1,38 @@
+Class [
+    name: Banana
+    parent: Fruit, Yellow, object
+    variables [
+        Assignment(CLASS_VAR_1 = "500 is not equal to 100")
+        Assignment(SETTING = True)
+    ]
+    methods []
+    classes [
+        Class [
+            name: SubClass
+            parent: Building
+            variables []
+            methods [
+                Function [
+                    name: __init__
+                    parameters: ["self", "height"]
+                    functions []
+                    source [
+                        Line   22:         def __init__(self, height) -> Self:
+                        Line   23:             super().__init__()
+                        Line   25:             self.height = height
+                    ]
+                ]
+                Function [
+                    name: get_height
+                    parameters: ["self"]
+                    functions []
+                    source [
+                        Line   27:         def get_height(self) -> int:
+                        Line   28:             return self.height
+                    ]
+                ]
+            ]
+            classes []
+        ]
+    ]
+]

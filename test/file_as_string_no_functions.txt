@@ -1,0 +1,28 @@
+File [
+    name: file_as_string
+    imports: ["math", "rnd", "listdir", "a", "b", "m"]
+    global variables [
+        Assignment(FPS = 60)
+        Assignment(VSYNC = True)
+    ]
+    functions []
+    classes [
+        Class [
+            name: Rect
+            parent: 
+            variables []
+            methods [
+                Function [
+                    name: __init__
+                    parameters: ["self", "a"]
+                    functions []
+                    source [
+                        Line   10:     def __init__(self, a):
+                        Line   11:         self.a = a
+                    ]
+                ]
+            ]
+            classes []
+        ]
+    ]
+]

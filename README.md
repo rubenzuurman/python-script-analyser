@@ -134,3 +134,32 @@ I changed the type of global file variables from String to Assignment.
 **22-07-2023**
 12.55<br />
 I did some googling yesterday and I am probably going to use the `cargo-llvm-cov` crate to monitor the test coverage.
+
+13.35<br />
+The command to install llvm-cov is `cargo +stable install cargo-llvm-cov --locked` ([source](https://github.com/taiki-e/cargo-llvm-cov#from-source)). The command to run llvm-cov (and generate an HTML report, and show untested lines) is `cargo llvm-cov --html --show-missing-lines`.
+
+**23-07-2023**
+13.05<br />
+I just finished implementing many tests to cover as many lines as possible (according to the llvm-cov report).
+
+13.23<br />
+The only untested lines are:<br />
+&emsp;- test cases which should not fail ever, if they do the tests fail as well<br />
+&emsp;- the skipping empty lines check in the Class struct (for some reason I can't get this line to be executed, I might get back to this later)<br />
+&emsp;- two cases where an option enum should always be matched, if it doesn't something is very wrong, so it is expected that these lines are never executed<br />
+&emsp;- a warning message which gets printed if the filename specified does not have the extension ".py", as I don't know how to test if the warning was actually printed ([this forum answer](https://users.rust-lang.org/t/how-to-test-output-to-stdout/4877/6) suggests writing to a generic stream instead of the standard output)<br />
+
+I think the test coverage is good for now:
+![Test Coverage Report 13.33 23-07-2023](doc/test_coverage_report_2023_07_23_13_33.png "Test Coverage Report 13.33 23-07-2023")
+
+18.53<br />
+Just a note on the command line arguments that I use with llvm-cov (the command is `cargo llvm-cov --html --lib --show-missing-lines`):<br />
+&emsp;`--html` generates an html report instead of output to the standard output (this argument is also used to generate the report above)<br />
+&emsp;`--lib` test only this library's unit tests (only lib.rs in my case)<br />
+&emsp;`--show-missing-lines` prints all line numbers to the console which were not executed during the tests
+
+19.01<br />
+I could probably add an extra parameter (`should_match: bool`) to the test cases which should never fail, and add extra test cases which should not match which have this parameter set to false. This way I also test that the regex patterns do not match when they should not match.
+
+19.23<br />
+I found out why the is_empty() line in Class::new() is never called: empty lines are removed at the start of the function. I need the first non-empty line (for the class definition) and the second non-empty line (for the class indentation). I'm not sure if it's worth reworking that part of the function, I could also remove the check if the line is empty in the loop. I'm adding it to the todo list and deciding on it later.

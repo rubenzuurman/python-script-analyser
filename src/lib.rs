@@ -152,24 +152,7 @@ impl Line {
         };
         
         // Build string.
-        return format!("{}Line{}{}: {}", spaces, line_space, self.get_number(), self.get_text());
-    }
-    
-}
-
-impl std::fmt::Display for Line {
-    
-    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        let line_space: &str = match self.number {
-            n if n >= 1000 => " ", 
-            n if n >= 100  => "  ", 
-            n if n >= 10   => "   ", 
-            n if n >= 1    => "    ", 
-            _              => "    "
-        };
-        
-        print!("Line{}{}: {}", line_space, self.get_number(), self.get_text());
-        return Ok(());
+        return format!("{}Line{}{}: {}\n", spaces, line_space, self.get_number(), self.get_text());
     }
     
 }
@@ -337,9 +320,9 @@ pub struct File {
 
 impl File {
     
-    pub fn new(filename: &str, source: &Vec<Line>) -> Self {
+    pub fn new(filepath: &str, source: &Vec<Line>) -> Self {
         // Get filename from path.
-        let path = Path::new(filename);
+        let path = Path::new(filepath);
         let name: &OsStr = path.file_stem().unwrap();
         
         // Print warning if the extension is not 'py'.
@@ -420,10 +403,10 @@ impl File {
             
             // Detect global variables.
             match File::line_is_global_var(&line) {
-                Some(_) => {
+                Some(_) => {    
                     match Assignment::new(line) {
                         Some(a) => global_vars.push(a), 
-                        None => println!("'{}' should have been an assignment, but wasn't. This is not supposed to happen. (Around lib.rs:426 btw)", line), 
+                        None => println!("'{}' should have been an assignment, but wasn't. This is not supposed to happen. (File::new())", line.as_string(0)), 
                     }
                 }, 
                 None => ()
@@ -868,6 +851,11 @@ impl Function {
         // Iterate over lines and detect function start.
         let mut functions: Vec<Function> = Vec::new();
         for (index, line) in source.iter().enumerate() {
+            // Skip empty lines.
+            if line.get_text().trim().is_empty() {
+                continue;
+            }
+            
             // Check if currently in a function.
             let indentation_length = File::get_indentation_length(line);
             if function_tracker.is_active() {
@@ -922,7 +910,7 @@ impl Function {
             name: name, 
             parameters: parameters, 
             functions: functions, 
-            source: source.to_vec()
+            source: remove_empty_lines(source.to_vec())
         };
     }
     
@@ -968,20 +956,20 @@ impl Function {
         
         // Push functions.
         if self.get_functions().len() > 0 {
-            string.push_str(format!("{}functions: [\n", spaces_extra_tab).as_str());
+            string.push_str(format!("{}functions [\n", spaces_extra_tab).as_str());
             for function in self.get_functions() {
                 string.push_str(format!("{}", function.as_string(indentation_length + 8)).as_str());
             }
             string.push_str(format!("{}]\n", spaces_extra_tab).as_str());
         } else {
-            string.push_str(format!("{}functions: []\n", spaces_extra_tab).as_str());
+            string.push_str(format!("{}functions []\n", spaces_extra_tab).as_str());
         }
         
         // Push source.
         if self.get_source().len() > 0 {
             string.push_str(format!("{}source [\n", spaces_extra_tab).as_str());
             for line in self.get_source() {
-                string.push_str(format!("{}\n", line.as_string(indentation_length + 8)).as_str());
+                string.push_str(format!("{}", line.as_string(indentation_length + 8)).as_str());
             }
             string.push_str(format!("{}]\n", spaces_extra_tab).as_str());
         } else {
@@ -1066,7 +1054,7 @@ impl Class {
                 Some(_) => {
                     match Assignment::new(line) {
                         Some(a) => variables.push(a), 
-                        None => println!("'{}' should have been an assignment, but wasn't. This is not supposed to happen. (Around lib.rs:1071 btw)", line), 
+                        None => println!("'{}' should have been an assignment, but wasn't. This is not supposed to happen. (Class::new())", line.as_string(0)), 
                     }
                 }
                 None => continue
@@ -1820,6 +1808,254 @@ mod tests {
     }
     
     #[test]
+    fn test_as_string() {
+        // Test Line::as_string().
+        let lines: Vec<Line> = vec![
+            Line::new(0, "I seriously doubt she actually believes you."), 
+            Line::new(1, "My boyfriend loves this song."), 
+            Line::new(7, "The store had multiple skeletons they claimed were real, alongside a taxidermies, two-headed calf."), 
+            Line::new(10, "Elizabeth is traveling all around the country to hear directly from people like you."), 
+            Line::new(75, "She sunburned herself so badly she looked like a tomato."), 
+            Line::new(100, "You did right in me by telling the truth."), 
+            Line::new(384, "I agree it’s not bad to steal from a convenience store."), 
+            Line::new(1000, "I like open spaces."), 
+            Line::new(2945, "Don’t worry, be happy!"), 
+            Line::new(6923858, "Being late is never okay."), 
+        ];
+        
+        let strings_zero_indentation: Vec<(usize, String)> = vec![
+            (0, "Line    0: I seriously doubt she actually believes you.".to_string()), 
+            (0, "Line    1: My boyfriend loves this song.".to_string()), 
+            (0, "Line    7: The store had multiple skeletons they claimed were real, alongside a taxidermies, two-headed calf.".to_string()), 
+            (0, "Line   10: Elizabeth is traveling all around the country to hear directly from people like you.".to_string()), 
+            (0, "Line   75: She sunburned herself so badly she looked like a tomato.".to_string()), 
+            (0, "Line  100: You did right in me by telling the truth.".to_string()), 
+            (0, "Line  384: I agree it’s not bad to steal from a convenience store.".to_string()), 
+            (0, "Line 1000: I like open spaces.".to_string()), 
+            (0, "Line 2945: Don’t worry, be happy!".to_string()), 
+            (0, "Line 6923858: Being late is never okay.".to_string()), 
+        ];
+        
+        let strings_random_indentation: Vec<(usize, String)> = vec![
+            (50, "Line    0: I seriously doubt she actually believes you.".to_string()), 
+            (22, "Line    1: My boyfriend loves this song.".to_string()), 
+            (53, "Line    7: The store had multiple skeletons they claimed were real, alongside a taxidermies, two-headed calf.".to_string()), 
+            (50, "Line   10: Elizabeth is traveling all around the country to hear directly from people like you.".to_string()), 
+            (37, "Line   75: She sunburned herself so badly she looked like a tomato.".to_string()), 
+            (50, "Line  100: You did right in me by telling the truth.".to_string()), 
+            (57, "Line  384: I agree it’s not bad to steal from a convenience store.".to_string()), 
+            (68, "Line 1000: I like open spaces.".to_string()), 
+            (51, "Line 2945: Don’t worry, be happy!".to_string()), 
+            (16, "Line 6923858: Being late is never okay.".to_string()), 
+        ];
+        
+        for (line, (indentation, string)) in std::iter::zip(lines.clone(), strings_zero_indentation) {
+            assert_eq!(line.as_string(indentation), format!("{}\n", string));
+        }
+        
+        for (line, (indentation, string)) in std::iter::zip(lines.clone(), strings_random_indentation) {
+            let spaces: Vec<char> = vec![' '; indentation];
+            let indentation_string: String = spaces.iter().collect();
+            assert_eq!(line.as_string(indentation), format!("{}{}\n", indentation_string, string));
+        }
+        
+        // Test Assignment::as_string().
+        let assignments: Vec<Assignment> = vec![
+            Assignment::new(&Line::new(56, "a: int = 6")).unwrap(), 
+            Assignment::new(&Line::new(83, "    b: Mapping[int, str] = [5, 6, 7]")).unwrap(), 
+            Assignment::new(&Line::new(12, "         t=56.345")).unwrap(), 
+            Assignment::new(&Line::new(43, "string = \'hi there \\\' single single quotation \'")).unwrap(), 
+            Assignment::new(&Line::new(81, "string = \'hi there \\\" single double quotation \'")).unwrap(), 
+            Assignment::new(&Line::new(58, "string = \"hi there \\\' double double quotation \"")).unwrap(), 
+            Assignment::new(&Line::new(12, "string = \"hi there \\\" double double quotation \"")).unwrap(), 
+            Assignment::new(&Line::new(64, "string = \'[ loop \\\" s] \\\"\'")).unwrap(), 
+            Assignment::new(&Line::new(54, "string = \'( loop \\\" s) \\\"\'")).unwrap(), 
+            Assignment::new(&Line::new(93, "string = \'{ loop \\\" s} \\\"\'")).unwrap(), 
+            Assignment::new(&Line::new(57, "string = \"[ loop \\\" s] \\\"\"")).unwrap(), 
+            Assignment::new(&Line::new(26, "string = \"( loop \\\" s) \\\"\"")).unwrap(), 
+            Assignment::new(&Line::new(67, "string = \"{ loop \\\" s} \\\"\"")).unwrap(), 
+        ];
+        
+        let strings: Vec<(usize, String)> = vec![
+            (52, "Assignment(a = 6)".to_string()), 
+            (26, "Assignment(b = [5, 6, 7])".to_string()), 
+            (43, "Assignment(t = 56.345)".to_string()), 
+            (17, "Assignment(string = \'hi there \\\' single single quotation \')".to_string()), 
+            (93, "Assignment(string = \'hi there \\\" single double quotation \')".to_string()), 
+            (24, "Assignment(string = \"hi there \\\' double double quotation \")".to_string()), 
+            (64, "Assignment(string = \"hi there \\\" double double quotation \")".to_string()), 
+            (52, "Assignment(string = \'[ loop \\\" s] \\\"\')".to_string()), 
+            (95, "Assignment(string = \'( loop \\\" s) \\\"\')".to_string()), 
+            (23, "Assignment(string = \'{ loop \\\" s} \\\"\')".to_string()), 
+            (69, "Assignment(string = \"[ loop \\\" s] \\\"\")".to_string()), 
+            (25, "Assignment(string = \"( loop \\\" s) \\\"\")".to_string()), 
+            (74, "Assignment(string = \"{ loop \\\" s} \\\"\")".to_string()), 
+        ];
+        
+        for (assignment, (indentation, string)) in std::iter::zip(assignments, strings) {
+            let spaces: Vec<char> = vec![' '; indentation];
+            let indentation_string: String = spaces.iter().collect();
+            assert_eq!(assignment.as_string(indentation), format!("{}{}\n", indentation_string, string));
+        }
+        
+        // Test Function::as_string().
+        let lines: Vec<Line> = vec![
+            Line::new(1, "def func(p1, p2, p3=\"5\", *args, **kwargs) -> int:"),
+            Line::new(2, "    def f2(p4, p5):"),
+            Line::new(3, "        print(f\"p4: {p4}, p5: {p5}\")"),
+            Line::new(4, "    f2(p1, p2)"),
+            Line::new(5, "    f2(p2, p3)")
+        ];
+        
+        // Test function with all fields present.
+        let function: Function = Function::new(&lines);
+        let function_string: String = get_file_lines("test/function_as_string_all_fields_present.txt").unwrap().join("\n") + "\n";
+        
+        // Test function with empty functions.
+        let mut function_empty_functions: Function = function.clone();
+        function_empty_functions.functions = vec![];
+        let function_string_no_functions: String = get_file_lines("test/function_as_string_no_functions.txt").unwrap().join("\n") + "\n";
+        
+        // Test function with empty source.
+        let mut function_empty_source: Function = function.clone();
+        function_empty_source.source = vec![];
+        let function_string_no_source: String = get_file_lines("test/function_as_string_no_source.txt").unwrap().join("\n") + "\n";
+        
+        // Create strings and functions vector for testing indentation.
+        let strings: Vec<String> = vec![function_string, function_string_no_functions, function_string_no_source];
+        let functions: Vec<Function> = vec![function, function_empty_functions, function_empty_source];
+        
+        // Test indentation.
+        let function_indentation_vector: Vec<usize> = vec![0, 14, 56, 12, 35, 91, 42, 76, 27, 65, 37];
+        for indentation in function_indentation_vector.iter() {
+            // Construct indentation string.
+            let spaces_vec: Vec<char> = vec![' '; *indentation];
+            let spaces: String = spaces_vec.iter().collect();
+            
+            // Loop over sources and functions to indent.
+            for (source, function) in std::iter::zip(strings.clone(), functions.clone()) {
+                // Replace every newline with a newline followed by spaces.
+                let from: String = "\n".to_string();
+                let to: String = format!("\n{}", spaces);
+                let source_indented: String = source.replace(&from, &to);
+                
+                // Prepend string with spaces.
+                let source_indented = spaces.clone() + &source_indented;
+                
+                // Remove spaces from end of string.
+                let source_indented = &source_indented[..source_indented.len() - spaces.len()];
+                
+                // Check string equality.
+                assert_eq!(source_indented, function.as_string(*indentation));
+            }
+        }
+        
+        // Test Class::as_string().
+        let lines_str: Vec<String> = get_lines_for_test("test/class_source_test.py");
+        let lines: Vec<Line> = vec_str_to_vec_line(&lines_str);
+        
+        // Test class with all fields present.
+        let class: Class = Class::new(&lines);
+        let class_string: String = get_file_lines("test/class_as_string_all_fields_present.txt").unwrap().join("\n") + "\n";
+        
+        // Test class with empty variables.
+        let mut class_empty_variables: Class = class.clone();
+        class_empty_variables.variables = vec![];
+        let class_string_no_variables: String = get_file_lines("test/class_as_string_no_variables.txt").unwrap().join("\n") + "\n";
+        
+        // Test class with empty methods.
+        let mut class_empty_methods: Class = class.clone();
+        class_empty_methods.methods = vec![];
+        let class_string_no_methods: String = get_file_lines("test/class_as_string_no_methods.txt").unwrap().join("\n") + "\n";
+        
+        // Test class with empty classes.
+        let mut class_empty_classes: Class = class.clone();
+        class_empty_classes.classes = vec![];
+        let class_string_no_classes: String = get_file_lines("test/class_as_string_no_classes.txt").unwrap().join("\n") + "\n";
+        
+        // Create strings and classes vector for testing indentation.
+        let strings: Vec<String> = vec![class_string, class_string_no_variables, class_string_no_methods, class_string_no_classes];
+        let classes: Vec<Class> = vec![class, class_empty_variables, class_empty_methods, class_empty_classes];
+        
+        // Test indentation.
+        let class_indentation_vector: Vec<usize> = vec![0, 53, 16, 43, 64, 19, 34, 92, 61, 30, 27];
+        for indentation in class_indentation_vector.iter() {
+            // Construct indentation string.
+            let spaces_vec: Vec<char> = vec![' '; *indentation];
+            let spaces: String = spaces_vec.iter().collect();
+            
+            // Loop over sources and classes to indent.
+            for (source, class) in std::iter::zip(strings.clone(), classes.clone()) {
+                // Replace every newline with a newline followed by spaces.
+                let from: String = "\n".to_string();
+                let to: String = format!("\n{}", spaces);
+                let source_indented: String = source.replace(&from, &to);
+                
+                // Prepend string with spaces.
+                let source_indented = spaces.clone() + &source_indented;
+                
+                // Remove spaces from end of string.
+                let source_indented = &source_indented[..source_indented.len() - spaces.len()];
+                
+                // Check string equality.
+                assert_eq!(source_indented, class.as_string(*indentation));
+            }
+        }
+        
+        // Test File::as_string().
+        let lines_str: Vec<String> = get_lines_for_test("test/file_as_string.py");
+        let lines: Vec<Line> = vec_str_to_vec_line(&lines_str);
+        
+        // Test file with all fields present.
+        let file: File = File::new("test/file_as_string.py", &lines);
+        let file_string: String = get_file_lines("test/file_as_string_all_fields_present.txt").unwrap().join("\n") + "\n";
+        
+        // Test file with empty global variables.
+        let mut file_empty_global_variables: File = file.clone();
+        file_empty_global_variables.global_variables = vec![];
+        let file_string_no_global_variables: String = get_file_lines("test/file_as_string_no_global_variables.txt").unwrap().join("\n") + "\n";
+        
+        // Test file with empty functions.
+        let mut file_empty_functions: File = file.clone();
+        file_empty_functions.functions = vec![];
+        let file_as_string_no_functions: String = get_file_lines("test/file_as_string_no_functions.txt").unwrap().join("\n") + "\n";
+        
+        // Test file with empty classes.
+        let mut file_empty_classes: File = file.clone();
+        file_empty_classes.classes = vec![];
+        let file_as_string_no_classes: String = get_file_lines("test/file_as_string_no_classes.txt").unwrap().join("\n") + "\n";
+        
+        // Create strings and files vectors for testing indentation.
+        let strings: Vec<String> = vec![file_string, file_string_no_global_variables, file_as_string_no_functions, file_as_string_no_classes];
+        let files: Vec<File> = vec![file, file_empty_global_variables, file_empty_functions, file_empty_classes];
+        
+        // Test indentation.
+        let file_indentation_vector: Vec<usize> = vec![0, 87, 34, 27, 13, 64, 81, 58, 42, 52, 18];
+        for indentation in file_indentation_vector.iter() {
+            // Construct indentation string.
+            let spaces_vec: Vec<char> = vec![' '; *indentation];
+            let spaces: String = spaces_vec.iter().collect();
+            
+            // Loop over sources and files to indent.
+            for (source, file) in std::iter::zip(strings.clone(), files.clone()) {
+                // Replace every newline with a newline followed by spaces.
+                let from: String = "\n".to_string();
+                let to: String = format!("\n{}", spaces);
+                let source_indented: String = source.replace(&from, &to);
+                
+                // Prepend string with spaces.
+                let source_indented = spaces.clone() + &source_indented;
+                
+                // Remove spaces from end of string.
+                let source_indented = &source_indented[..source_indented.len() - spaces.len()];
+                
+                // Check string equality.
+                assert_eq!(source_indented, file.as_string(*indentation));
+            }
+        }
+    }
+    
+    #[test]
     fn test_create_line() {
         let test_cases: Vec<(usize, &str)> = vec![
             (25, "Hi there"), 
@@ -1875,6 +2111,9 @@ mod tests {
             Line::new(20, "tup = \"⬐⚎ⶲ⎵✳ⵡ⽔⅖⛷␘ⵈ∶⌚⻿⭑⥇∟⪍∡ⵂ↙❣⦘⽤⁍⬀ⶔ✩➹Ⳡ⬌⻒⟓Ⱞ➦ⶶ‹⢪⪲⯨⚖┡⪧⫢⓬␝⮅⮟ⅶ❏‥⮫╖⣪⩢⊭ₛⲓ↾⊵⒦⦀⫛⢂⺪❴⸚◫⶷⼍⍟ⴳ➔⨲ℳ⭝ⶢ∫ⴸⰏ⯆⍑⤥⬗⣃⁢◹⑟Ɽ⨭⧡❩⣶➯⮦♆✱⭱ⶴ⏜\""), 
             Line::new(38, "tup   =   \"␙⿄≛⼖⍆➂⺶⍟„╧⼮↓ⴏ⫃⚏⳪⸧╺⚐⩗⌑⩈❫⵸⮚⫻⹡≻⏈✣⑴⛽⪬⯷⥸⇎╨⵫❺⤸⩍…⨄⃊⽘ⷈ⬑⃗♉┑⧮⺺↓⧜⪉⵺⃲█⹙Ⅵ⥜⿲⣣℉⥡⚨ⱚ⚌⽬⚦⟇⨠⼡⵵ⱜ⩫⵨₾⿴⒏╈ₔ⃿⨼⊡Ⓙ∏⽸⌃⍐┐⻺⿈⇵⃫✋⇞⯅ℹ\""), 
             Line::new(54, "if t == \"⃋┍⭚∈⻮⠊⽆⭌⽠ⴰ⏽⿐⼎⦎┑⟄⧟⹄⧤⺅⁀⣼⢦⒵⣛⋏╢⦗┺⡘⡽⢥\":"), 
+            Line::new(24, "\' a=5  \\\'  b=6  \'"), 
+            Line::new(87, "\" t = time.time(\'Banana\')  \\\"  b=6  \""), 
+            Line::new(55, "=535"), 
             // The test below can be used to check if the grapheme cluster implementation works in the future.
             // Line::new(26, "d[\"⫁⦲⸀␩⠊⫅┤◦☬⑏▉⢀✁ⷞ○⋅Ⰼ\"] = \"⿈✦ⵀⳎ⟚☳┞⟑☷⛩⟒⌀⨮⭸⹖⒣\""), 
         ];
@@ -1914,6 +2153,9 @@ mod tests {
             Some(4), 
             Some(6), 
             None, 
+            None, 
+            None, 
+            None, 
             // Result of the grapheme cluster test above. This is not necessarily the correct answer, just the number of characters sublime text indicates.
             //Some(25), 
         ];
@@ -1937,6 +2179,7 @@ mod tests {
             Line::new(83, "    def gc_callback(self, phase: str, info: Mapping[str, int]) -> None:"), 
             Line::new(13, "torch.repeat_interleave(x, dim=2, repeats=n_rep)"), 
             Line::new(76, "a = torch.repeat_interleave(x, dim=2, repeats=n_rep)"), 
+            Line::new(52, "amount: int = 5"), 
         ];
         
         let test_results: Vec<Option<Assignment>> = vec![
@@ -1950,6 +2193,7 @@ mod tests {
             None, 
             None, 
             Some(Assignment {name: "a".to_string(), value: "torch.repeat_interleave(x, dim=2, repeats=n_rep)".to_string(), source: test_lines.get(9).unwrap().clone()}), 
+            Some(Assignment {name: "amount".to_string(), value: "5".to_string(), source: test_lines.get(10).unwrap().clone()}), 
         ];
         
         for (line, expected_result) in std::iter::zip(test_lines, test_results) {
@@ -1964,6 +2208,8 @@ mod tests {
             "test/create_function.py", 
             "test/create_function2.py", 
             "test/function_at_end_of_file_no_newline.py", 
+            "test/create_function_weird_cases.py", 
+            "test/create_function_typo.py", 
         ];
         
         let expected_results: Vec<Function> = vec![
@@ -2020,13 +2266,46 @@ mod tests {
                     Line::new(1, "def function(param1, param2=5):"), 
                     Line::new(2, "    print(param1, param2)"), 
                 ], 
+            }, 
+            Function {
+                name: "f1".to_string(), 
+                parameters: vec![
+                    "\'Hi there\'".to_string(), 
+                    "p3=\'Hi p3\'".to_string(), 
+                    "p4=\"Hi p4\"".to_string(), 
+                ], 
+                functions: vec![
+                    Function {
+                        name: "f2".to_string(), 
+                        parameters: vec![
+                            "\"Thanks!\"".to_string(), 
+                            "d={\"a\": \"b\"}".to_string(), 
+                        ], 
+                        functions: vec![], 
+                        source: vec![
+                            Line::new(2, "    def f2(\"Thanks!\", d={\"a\": \"b\"}):"), 
+                            Line::new(3, "        pass"), 
+                        ]
+                    }
+                ], 
+                source: vec![
+                    Line::new(1, "def f1(\'Hi there\', p3=\'Hi p3\', p4=\"Hi p4\"):"), 
+                    Line::new(2, "    def f2(\"Thanks!\", d={\"a\": \"b\"}):"), 
+                    Line::new(3, "        pass"), 
+                ]
+            }, 
+            Function {
+                name: "name".to_string(), 
+                parameters: vec![], 
+                functions: vec![], 
+                source: vec![], 
             }
         ];
         
         for (filename, expected_function) in std::iter::zip(files, expected_results) {
             // Create function object from filename.
             let lines_str: Vec<String> = get_lines_for_test(filename);
-            let lines: Vec<Line> = remove_empty_lines(vec_str_to_vec_line(&lines_str)); // Empty lines must be removed from this vector because empty lines are usually filtered in the File struct.
+            let lines: Vec<Line> = vec_str_to_vec_line(&lines_str);
             let function: Function = Function::new(&lines);
             
             // Compare function object to expected function object.
@@ -2036,23 +2315,115 @@ mod tests {
     
     #[test]
     fn test_create_class() {
-        let lines_str: Vec<String> = get_lines_for_test("test/create_class.py");
-        let lines: Vec<Line> = vec_str_to_vec_line(&lines_str);
-        let class: Class = Class::new(&lines);
-        
-        let class_name_want: String = String::from("Rect");
-        let class_parent_want: String = String::from("Shape");
-        let class_variables_want: Vec<Assignment> = vec![
-            Assignment::new(lines.get(2).unwrap()).unwrap(), 
-            Assignment::new(lines.get(8).unwrap()).unwrap(), 
-            Assignment::new(lines.get(9).unwrap()).unwrap(), 
-            Assignment::new(lines.get(15).unwrap()).unwrap()
+        let files: Vec<&str> = vec![
+            "test/create_class.py", 
+            "test/create_class_typo.py", 
         ];
-        let class_methods_want: Vec<Function> = vec![Function::new(&lines[4..=6].to_vec()), Function::new(&lines[11..=13].to_vec())];
-        let class_classes_want: Vec<Class> = vec![];
-        let class_want: Class = Class {name: class_name_want, parent: class_parent_want, variables: class_variables_want, methods: class_methods_want, classes: class_classes_want};
         
-        assert_eq!(class, class_want);
+        let expected_results: Vec<Class> = vec![
+            Class {
+                name: "Rect".to_string(), 
+                parent: "Shape".to_string(), 
+                variables: vec![
+                    Assignment::new(&Line::new(3, "    STATIC_A = 5")).unwrap(), 
+                    Assignment::new(&Line::new(9, "    STATIC_B=6     ")).unwrap(), 
+                    Assignment::new(&Line::new(10, "    ANOTHER_STATIC     =     5         ")).unwrap(), 
+                    Assignment::new(&Line::new(16, "    MORE_STATIC=\"Static string\"")).unwrap(), 
+                ], 
+                methods: vec![
+                    Function {
+                        name: "__init__".to_string(), 
+                        parameters: vec!["self".to_string(), "a=STATIC_A".to_string(), "b=5".to_string()], 
+                        functions: vec![], 
+                        source: vec![
+                            Line::new(5, "    def __init__(self, a=STATIC_A, b=5):"), 
+                            Line::new(6, "        self.a=a"), 
+                            Line::new(7, "        self.b=b+1"), 
+                        ]
+                    }, 
+                    Function {
+                        name: "func2".to_string(), 
+                        parameters: vec!["self".to_string(), "a".to_string(), "b".to_string(), "c=2".to_string()], 
+                        functions: vec![], 
+                        source: vec![
+                            Line::new(12, "    def func2(self, a, b, c=2):  "), 
+                            Line::new(13, "        self.c = self.a * a + self.b * b + c"), 
+                            Line::new(14, "        print(\"Banana\")"), 
+                        ]
+                    }
+                ], 
+                classes: vec![]
+            }, 
+            Class {
+                name: "".to_string(), 
+                parent: "".to_string(), 
+                variables: vec![], 
+                methods: vec![], 
+                classes: vec![]
+            }
+        ];
+        
+        for (filename, expected_class) in std::iter::zip(files, expected_results) {
+            // Create class object from filename.
+            let lines_str: Vec<String> = get_lines_for_test(filename);
+            let lines: Vec<Line> = vec_str_to_vec_line(&lines_str);
+            let class: Class = Class::new(&lines);
+            
+            // Compare class object to expected class object.
+            assert_eq!(class, expected_class);
+        }
+    }
+    
+    #[test]
+    fn test_class_get_source() {
+        let files: Vec<&str> = vec![
+            "test/create_class.py", 
+            "test/class_source_test.py", 
+        ];
+        
+        let sources: Vec<Vec<Line>> = vec![
+            vec![
+                Line::new(2, "class Rect(Shape): [FABICATED LINE]"),
+                Line::new(3, "    STATIC_A = 5"),
+                Line::new(5, "    def __init__(self, a=STATIC_A, b=5):"),
+                Line::new(6, "        self.a=a"),
+                Line::new(7, "        self.b=b+1"),
+                Line::new(9, "    STATIC_B=6     "),
+                Line::new(10, "    ANOTHER_STATIC     =     5         "),
+                Line::new(12, "    def func2(self, a, b, c=2):  "),
+                Line::new(13, "        self.c = self.a * a + self.b * b + c"),
+                Line::new(14, "        print(\"Banana\")"),
+                Line::new(16, "    MORE_STATIC=\"Static string\"")
+            ], 
+            vec![
+                Line::new(5, "class Banana(Fruit, Yellow, object): [FABICATED LINE]"),
+                Line::new(6, "    CLASS_VAR_1 = \"500 is not equal to 100\""),
+                Line::new(8, "    def __init__(self, size):"),
+                Line::new(9, "        super().__init__()"),
+                Line::new(10, "        self.sub_func_ran = False"),
+                Line::new(12, "        def sub_func(a, b):"),
+                Line::new(13, "            self.sub_func_ran = True"),
+                Line::new(14, "            return a * b + 5"),
+                Line::new(16, "        self.size = size"),
+                Line::new(18, "    SETTING = True"),
+                Line::new(21, "    class SubClass(Building): [FABICATED LINE]"),
+                Line::new(22, "        def __init__(self, height) -> Self:"),
+                Line::new(23, "            super().__init__()"),
+                Line::new(25, "            self.height = height"),
+                Line::new(27, "        def get_height(self) -> int:"),
+                Line::new(28, "            return self.height"),
+            ]
+        ];
+        
+        for (filename, source) in std::iter::zip(files, sources) {
+            // Create class object from filename.
+            let lines_str: Vec<String> = get_lines_for_test(filename);
+            let lines: Vec<Line> = vec_str_to_vec_line(&lines_str);
+            let class: Class = Class::new(&lines);
+            
+            // Compare class source with predefined vector.
+            assert_eq!(class.get_source(), source);
+        }
     }
     
     #[test]
@@ -2077,6 +2448,7 @@ mod tests {
             "test/function_in_middle_of_file_no_newline.py", 
             "test/class_in_middle_of_file_no_newline.py", 
             "test/recursive_functions.py", 
+            "test/file_as_string.py", 
         ];
         
         let expected_results: Vec<File> = vec![
@@ -2477,7 +2849,45 @@ mod tests {
                     }
                 ], // end of functions
                 classes: vec![] // end of classes
-            } // end of file
+            }, // end of file
+            File {
+                name: "file_as_string".to_string(), 
+                imports: vec!["math".to_string(), "rnd".to_string(), "listdir".to_string(), "a".to_string(), "b".to_string(), "m".to_string()], 
+                global_variables: vec![
+                    Assignment {name: "FPS".to_string(), value: "60".to_string(), source: Line::new(5, "FPS = 60")}, 
+                    Assignment {name: "VSYNC".to_string(), value: "True".to_string(), source: Line::new(6, "VSYNC = True")}, 
+                ], 
+                functions: vec![
+                    Function {
+                        name: "function".to_string(), 
+                        parameters: vec!["p1".to_string(), "p2=\'5\'".to_string()], 
+                        functions: vec![], 
+                        source: vec![
+                            Line::new(13, "def function(p1, p2=\'5\'):"), 
+                            Line::new(14, "    print(p1, p2)"), 
+                        ]
+                    }
+                ], 
+                classes: vec![
+                    Class {
+                        name: "Rect".to_string(), 
+                        parent: "".to_string(), 
+                        variables: vec![], 
+                        methods: vec![
+                            Function {
+                                name: "__init__".to_string(), 
+                                parameters: vec!["self".to_string(), "a".to_string()], 
+                                functions: vec![], 
+                                source: vec![
+                                    Line::new(10, "    def __init__(self, a):"), 
+                                    Line::new(11, "        self.a = a"), 
+                                ]
+                            }
+                        ], 
+                        classes: vec![]
+                    }
+                ]
+            }, // end of file
         ]; // end of files
         
         // Read lines from files and create File objects from them, then compare the File objects to the File objects in the vector above.

@@ -1,6 +1,6 @@
-from __future__ import annotations
+from __future__ import annotations, m a n g o
 
-import gc
+import gc, b a n a a n
 import time
 from typing import Mapping
 

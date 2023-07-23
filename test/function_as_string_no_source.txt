@@ -1,0 +1,16 @@
+Function [
+    name: func
+    parameters: ["p1", "p2", "p3=\"5\"", "*args", "**kwargs"]
+    functions [
+        Function [
+            name: f2
+            parameters: ["p4", "p5"]
+            functions []
+            source [
+                Line    2:     def f2(p4, p5):
+                Line    3:         print(f"p4: {p4}, p5: {p5}")
+            ]
+        ]
+    ]
+    source []
+]
