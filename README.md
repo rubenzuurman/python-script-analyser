@@ -163,3 +163,13 @@ I could probably add an extra parameter (`should_match: bool`) to the test cases
 
 19.23<br />
 I found out why the is_empty() line in Class::new() is never called: empty lines are removed at the start of the function. I need the first non-empty line (for the class definition) and the second non-empty line (for the class indentation). I'm not sure if it's worth reworking that part of the function, I could also remove the check if the line is empty in the loop. I'm adding it to the todo list and deciding on it later.
+
+**24-07-2023**
+15.01<br />
+The goal of the program is to output warnings per function/class/class method. The file struct could have a function which returns a report containing the warnings (or something like "No warnings." if no warnings were emitted). I can check if an import/variable was used by checking if it exists in a line (not in quotations) which is not an assignment.<br />
+
+I am hesitant to merge dev into master right now because not 100% of branches are tested. I will probably be more sure about this if I implement the tests to test if the regexes fail when they should, and if I implement writing to a generic stream instead of standard output (following [this suggestion](https://users.rust-lang.org/t/how-to-test-output-to-stdout/4877/6)) (that way I can test if messages were actually sent to the stream, which also helps a lot when implementing the warning messages).
+
+**25-07-2023**
+22.36<br />
+Switched from printing messages to the standard output to adding them to a BufWriter wrapping anything which implements the Write trait. This could be the standard output or a file, for example.

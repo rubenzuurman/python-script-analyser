@@ -1,5 +1,5 @@
 use std::fs;
-use std::io;
+use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::ffi::OsStr;
 
@@ -320,7 +320,7 @@ pub struct File {
 
 impl File {
     
-    pub fn new(filepath: &str, source: &Vec<Line>) -> Self {
+    pub fn new(filepath: &str, source: &Vec<Line>, writer: &mut BufWriter<Box<dyn Write>>) -> Self {
         // Get filename from path.
         let path = Path::new(filepath);
         let name: &OsStr = path.file_stem().unwrap();
@@ -329,11 +329,11 @@ impl File {
         match path.extension().and_then(OsStr::to_str) {
             Some(extension) => {
                 if extension != "py" {
-                    eprintln!("WARNING: The input file might not be a python file (extension='{}', not 'py').", extension);
+                    write_to_writer(writer, format!("WARNING: The input file might not be a python file (extension='{}', not 'py').\n", extension).as_bytes());
                 }
             }, 
             None => {
-                eprintln!("WARNING: The input file might not be a python file (file has no extension).");
+                write_to_writer(writer, b"WARNING: The input file might not be a python file (file has no extension).\n")
             }
         }
         
@@ -375,7 +375,7 @@ impl File {
                         function_tracker.add_line(&line);
                     } else {
                         // End of function, create and push function.
-                        let function: Function = Function::new(function_tracker.get_source());
+                        let function: Function = Function::new(function_tracker.get_source(), writer);
                         functions.push(function);
                         // Reset tracker.
                         function_tracker.reset();
@@ -394,7 +394,7 @@ impl File {
                         class_tracker.add_line(&line);
                     } else {
                         // End of class, create and push class.
-                        let class: Class = Class::new(class_tracker.get_source());
+                        let class: Class = Class::new(class_tracker.get_source(), writer);
                         classes.push(class);
                         // Reset tracker.
                         class_tracker.reset();
@@ -407,7 +407,7 @@ impl File {
             }
             
             // Detect imports.
-            match File::line_is_import(&line) {
+            match File::line_is_import(&line, writer) {
                 Some(a) => {
                     for module in a.iter() {
                         imports.push(module.clone());
@@ -421,7 +421,7 @@ impl File {
                 Some(_) => {    
                     match Assignment::new(line) {
                         Some(a) => global_vars.push(a), 
-                        None => println!("'{}' should have been an assignment, but wasn't. This is not supposed to happen. (File::new())", line.as_string(0)), 
+                        None => write_to_writer(writer, format!("WARNING: '{}' should have been an assignment, but wasn't. This is not supposed to happen. (File::new())\n", line.as_string(0)).as_bytes()), 
                     }
                 }, 
                 None => ()
@@ -451,12 +451,12 @@ impl File {
         // Check if the function tracker or class tracker is still active.
         if function_tracker.is_active() {
             // End of function, create and push function.
-            let function: Function = Function::new(function_tracker.get_source());
+            let function: Function = Function::new(function_tracker.get_source(), writer);
             functions.push(function);
         }
         if class_tracker.is_active() {
             // End of class, create and push function.
-            let class: Class = Class::new(class_tracker.get_source());
+            let class: Class = Class::new(class_tracker.get_source(), writer);
             classes.push(class);
         }
         
@@ -479,7 +479,7 @@ impl File {
         return indentation_capt.unwrap()["indentation"].len();
     }
     
-    fn line_is_import(line: &Line) -> Option<Vec<String>> {
+    fn line_is_import(line: &Line, writer: &mut BufWriter<Box<dyn Write>>) -> Option<Vec<String>> {
         // Initialize regex.
         let re_import = Regex::new(PATTERN_IMPORT).unwrap();
         let re_from_import = Regex::new(PATTERN_FROM_IMPORT).unwrap();
@@ -504,7 +504,7 @@ impl File {
                 let mut indices_to_remove: Vec<usize> = Vec::new();
                 for (index, module) in modules_vec.iter().enumerate() {
                     if module.contains(char::is_whitespace) {
-                        eprintln!("WARNING: Line {}: Import cannot contain spaces '{}' (specifically '{}').", line.get_number(), line.get_text(), module);
+                        write_to_writer(writer, format!("WARNING: Line {}: Import cannot contain spaces '{}' (specifically '{}').\n", line.get_number(), line.get_text(), module).as_bytes());
                         indices_to_remove.push(index);
                     }
                 }
@@ -530,7 +530,7 @@ impl File {
                         let mut indices_to_remove: Vec<usize> = Vec::new();
                         for (index, object) in objects_vec.iter().enumerate() {
                             if object.contains(char::is_whitespace) {
-                                eprintln!("WARNING: Line {}: Import cannot contain spaces '{}' (specifically '{}').", line.get_number(), line.get_text(), object);
+                                write_to_writer(writer, format!("WARNING: Line {}: Import cannot contain spaces '{}' (specifically '{}').\n", line.get_number(), line.get_text(), object).as_bytes());
                                 indices_to_remove.push(index);
                             }
                         }
@@ -676,7 +676,7 @@ pub struct Function {
 
 impl Function {
     
-    pub fn new(source: &Vec<Line>) -> Self {
+    pub fn new(source: &Vec<Line>, writer: &mut BufWriter<Box<dyn Write>>) -> Self {
         // Get clone of source.
         let mut source: Vec<Line> = source.clone();
         
@@ -702,7 +702,7 @@ impl Function {
         let (name, params): (String, String) = match function_start_capt {
             Some(a) => (a["name"].to_string(), a["params"].to_string()), 
             None => {
-                eprintln!("Invalid function definition on the first line of the source '{}'.", first_line);
+                write_to_writer(writer, format!("WARNING: Invalid function definition on the first line of the source '{}'.\n", first_line).as_bytes());
                 return Function::default();
             }
         };
@@ -894,7 +894,7 @@ impl Function {
                         function_tracker.add_line(&line);
                     } else {
                         // End of function, create and push function.
-                        let function: Function = Function::new(function_tracker.get_source());
+                        let function: Function = Function::new(function_tracker.get_source(), writer);
                         functions.push(function);
                         // Reset tracker.
                         function_tracker.reset();
@@ -925,7 +925,7 @@ impl Function {
         // Check if the function tracker is still active.
         if function_tracker.is_active() {
             // End of function, create and push function.
-            let function: Function = Function::new(function_tracker.get_source());
+            let function: Function = Function::new(function_tracker.get_source(), writer);
             functions.push(function);
         }
         
@@ -1029,7 +1029,7 @@ pub struct Class {
 
 impl Class {
     
-    pub fn new(source: &Vec<Line>) -> Self {
+    pub fn new(source: &Vec<Line>, writer: &mut BufWriter<Box<dyn Write>>) -> Self {
         // Get clone of source.
         let mut source: Vec<Line> = source.clone();
         
@@ -1059,7 +1059,7 @@ impl Class {
                 (name, parent)
             }, 
             None => {
-                eprintln!("Invalid class definition on the first line of the source '{}'.", first_line);
+                write_to_writer(writer, format!("WARNING: Invalid class definition on the first line of the source '{}'.\n", first_line).as_bytes());
                 return Class::default();
             }
         };
@@ -1078,7 +1078,7 @@ impl Class {
                 Some(_) => {
                     match Assignment::new(line) {
                         Some(a) => variables.push(a), 
-                        None => println!("'{}' should have been an assignment, but wasn't. This is not supposed to happen. (Class::new())", line.as_string(0)), 
+                        None => write_to_writer(writer, format!("WARNING: '{}' should have been an assignment, but wasn't. This is not supposed to happen. (Class::new())\n", line.as_string(0)).as_bytes()), 
                     }
                 }
                 None => continue
@@ -1113,8 +1113,7 @@ impl Class {
                         method_tracker.add_line(&line);
                     } else {
                         // End of method, create and push method.
-                        let method: Function = Function::new(method_tracker.get_source());
-                        println!("Adding classmethod with name '{}' to class '{}'.", &method.get_name(), name);
+                        let method: Function = Function::new(method_tracker.get_source(), writer);
                         methods.push(method);
                         
                         // Reset tracker.
@@ -1134,8 +1133,7 @@ impl Class {
                         class_tracker.add_line(&line);
                     } else {
                         // End of class, create and push class.
-                        let class: Class = Class::new(class_tracker.get_source());
-                        println!("Adding class with name '{}' to class '{}'.", &class.get_name(), name);
+                        let class: Class = Class::new(class_tracker.get_source(), writer);
                         classes.push(class);
                         
                         // Reset tracker.
@@ -1177,14 +1175,12 @@ impl Class {
         // Check if a method or class was getting collected when the source ended.
         if method_tracker.is_active() {
             // Create classmethod object and add to methods vector.
-            let method: Function = Function::new(method_tracker.get_source());
-            println!("Adding classmethod with name '{}' to class '{}'.", &method.get_name(), name);
+            let method: Function = Function::new(method_tracker.get_source(), writer);
             methods.push(method);
         }
         if class_tracker.is_active() {
             // Create class object and add to classes vector.
-            let class: Class = Class::new(class_tracker.get_source());
-            println!("Adding class with name '{}' to class '{}'.", &class.get_name(), name);
+            let class: Class = Class::new(class_tracker.get_source(), writer);
             classes.push(class);
         }
         
@@ -1335,7 +1331,7 @@ impl PartialEq for Class {
     
 }
 
-pub fn get_file_lines(filename: &str) -> Result<Vec<String>, io::Error> {
+pub fn get_file_lines(filename: &str) -> Result<Vec<String>, std::io::Error> {
     let mut result: Vec<String> = Vec::new();
     let contents = fs::read_to_string(filename)?;
     for line in contents.lines() {
@@ -1374,11 +1370,26 @@ pub fn remove_empty_lines(mut source: Vec<Line>) -> Vec<Line> {
     return source;
 }
 
+pub fn write_to_writer(writer: &mut BufWriter<Box<dyn Write>>, buffer: &[u8]) {
+    match writer.write_all(buffer) {
+        Ok(_) => (), 
+        Err(e) => eprintln!("Error occured while writing a buffer of size {} to writer: '{}'", buffer.len(), e), 
+    }
+}
+
+pub fn flush_writer(writer: &mut BufWriter<Box<dyn Write>>) {
+    match writer.flush() {
+        Ok(()) => (), 
+        Err(e) => eprintln!("Error occured while flushing writer: '{}'", e), 
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     
     use std::collections::HashMap;
+    use std::io::ErrorKind;
     
     #[test]
     fn test_get_file_lines() {
@@ -1404,14 +1415,14 @@ mod tests {
                 "    ".to_string(), 
                 "    Banaan".to_string(), 
             ]), 
-            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "File does not exist.")), 
+            Err(std::io::Error::new(ErrorKind::NotFound, "File does not exist.")), 
             Ok(vec![
                 "# Used to test when the class definition does not match in the Class::new() method.".to_string(), 
                 "cass Triangle(Shape):".to_string(), 
                 "    ".to_string(), 
                 "    pass".to_string(), 
             ]), 
-            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "File does not exist.")), 
+            Err(std::io::Error::new(ErrorKind::NotFound, "File does not exist.")), 
         ];
         
         for (filename, expected_result) in std::iter::zip(filenames, expected_results) {
@@ -1866,6 +1877,10 @@ mod tests {
     
     #[test]
     fn test_partialeq_implementations() {
+        // Initialize writer.
+        let stdout_handle = std::io::stdout();
+        let mut writer: BufWriter<Box<dyn Write>> = BufWriter::new(Box::new(stdout_handle));
+        
         // Test line partialeq.
         let line_org: Line = Line::new(3785634756, "Some string");
         let line_same: Line = Line::new(3785634756, "Some string");
@@ -1896,8 +1911,8 @@ mod tests {
         // Test file partialeq.
         let lines_str: Vec<String> = get_lines_for_test("test/test_file_partialeq.py");
         let lines: Vec<Line> = vec_str_to_vec_line(&lines_str);
-        let file_org: File = File::new("test/test_file_partialeq.py", &lines);
-        let file_same: File = File::new("test/test_file_partialeq.py", &lines);
+        let file_org: File = File::new("test/test_file_partialeq.py", &lines, &mut writer);
+        let file_same: File = file_org.clone();
         assert_eq!(file_org == file_same, true);
         
         let mut file_diff_name: File = file_same.clone();
@@ -1948,8 +1963,8 @@ mod tests {
             Line::new(2, "    print(\"Calculating...\")"), 
             Line::new(3, "    return p1 + p2, p1 - p2"), 
         ];
-        let function_org: Function = Function::new(&lines);
-        let function_same: Function = Function::new(&lines);
+        let function_org: Function = Function::new(&lines, &mut writer);
+        let function_same: Function = function_org.clone();
         assert_eq!(function_org == function_same, true);
         
         let mut function_diff_name: Function = function_same.clone();
@@ -1978,8 +1993,8 @@ mod tests {
             Line::new(9, "        def __init__(self, b):"), 
             Line::new(10, "           self.b = b"),             
         ];
-        let class_org: Class = Class::new(&lines);
-        let class_same: Class = Class::new(&lines);
+        let class_org: Class = Class::new(&lines, &mut writer);
+        let class_same: Class = class_org.clone();
         assert_eq!(class_org == class_same, true);
         
         let mut class_diff_name: Class = class_same.clone();
@@ -2005,6 +2020,10 @@ mod tests {
     
     #[test]
     fn test_as_string() {
+        // Initialize writer.
+        let stdout_handle = std::io::stdout();
+        let mut writer: BufWriter<Box<dyn Write>> = BufWriter::new(Box::new(stdout_handle));
+        
         // Test Line::as_string().
         let lines: Vec<Line> = vec![
             Line::new(0, "I seriously doubt she actually believes you."), 
@@ -2104,7 +2123,7 @@ mod tests {
         ];
         
         // Test function with all fields present.
-        let function: Function = Function::new(&lines);
+        let function: Function = Function::new(&lines, &mut writer);
         let function_string: String = get_file_lines("test/function_as_string_all_fields_present.txt").unwrap().join("\n") + "\n";
         
         // Test function with empty functions.
@@ -2151,7 +2170,7 @@ mod tests {
         let lines: Vec<Line> = vec_str_to_vec_line(&lines_str);
         
         // Test class with all fields present.
-        let class: Class = Class::new(&lines);
+        let class: Class = Class::new(&lines, &mut writer);
         let class_string: String = get_file_lines("test/class_as_string_all_fields_present.txt").unwrap().join("\n") + "\n";
         
         // Test class with empty variables.
@@ -2203,7 +2222,7 @@ mod tests {
         let lines: Vec<Line> = vec_str_to_vec_line(&lines_str);
         
         // Test file with all fields present.
-        let file: File = File::new("test/file_as_string.py", &lines);
+        let file: File = File::new("test/file_as_string.py", &lines, &mut writer);
         let file_string: String = get_file_lines("test/file_as_string_all_fields_present.txt").unwrap().join("\n") + "\n";
         
         // Test file with empty global variables.
@@ -2400,6 +2419,10 @@ mod tests {
     
     #[test]
     fn test_create_function() {
+        // Initialize writer.
+        let stdout_handle = std::io::stdout();
+        let mut writer: BufWriter<Box<dyn Write>> = BufWriter::new(Box::new(stdout_handle));
+        
         let files: Vec<&str> = vec![
             "test/create_function.py", 
             "test/create_function2.py", 
@@ -2502,7 +2525,7 @@ mod tests {
             // Create function object from filename.
             let lines_str: Vec<String> = get_lines_for_test(filename);
             let lines: Vec<Line> = vec_str_to_vec_line(&lines_str);
-            let function: Function = Function::new(&lines);
+            let function: Function = Function::new(&lines, &mut writer);
             
             // Compare function object to expected function object.
             assert_eq!(function, expected_function);
@@ -2511,6 +2534,10 @@ mod tests {
     
     #[test]
     fn test_create_class() {
+        // Initialize writer.
+        let stdout_handle = std::io::stdout();
+        let mut writer: BufWriter<Box<dyn Write>> = BufWriter::new(Box::new(stdout_handle));
+        
         let files: Vec<&str> = vec![
             "test/create_class.py", 
             "test/create_class_typo.py", 
@@ -2563,7 +2590,7 @@ mod tests {
             // Create class object from filename.
             let lines_str: Vec<String> = get_lines_for_test(filename);
             let lines: Vec<Line> = vec_str_to_vec_line(&lines_str);
-            let class: Class = Class::new(&lines);
+            let class: Class = Class::new(&lines, &mut writer);
             
             // Compare class object to expected class object.
             assert_eq!(class, expected_class);
@@ -2572,6 +2599,10 @@ mod tests {
     
     #[test]
     fn test_class_get_source() {
+        // Initialize writer.
+        let stdout_handle = std::io::stdout();
+        let mut writer: BufWriter<Box<dyn Write>> = BufWriter::new(Box::new(stdout_handle));
+        
         let files: Vec<&str> = vec![
             "test/create_class.py", 
             "test/class_source_test.py", 
@@ -2615,7 +2646,7 @@ mod tests {
             // Create class object from filename.
             let lines_str: Vec<String> = get_lines_for_test(filename);
             let lines: Vec<Line> = vec_str_to_vec_line(&lines_str);
-            let class: Class = Class::new(&lines);
+            let class: Class = Class::new(&lines, &mut writer);
             
             // Compare class source with predefined vector.
             assert_eq!(class.get_source(), source);
@@ -2624,9 +2655,13 @@ mod tests {
     
     #[test]
     fn test_function_at_end_of_file_no_newline() {
+        // Initialize writer.
+        let stdout_handle = std::io::stdout();
+        let mut writer: BufWriter<Box<dyn Write>> = BufWriter::new(Box::new(stdout_handle));
+        
         let lines_str: Vec<String> = get_lines_for_test("test/function_at_end_of_file_no_newline.py");
         let lines: Vec<Line> = vec_str_to_vec_line(&lines_str);
-        let function: Function = Function::new(&lines);
+        let function: Function = Function::new(&lines, &mut writer);
         
         let function_name_want: String = "function".to_string();
         let function_parameters_want: Vec<String> = vec!["param1".to_string(), "param2=5".to_string()];
@@ -2637,7 +2672,7 @@ mod tests {
     }
     
     #[test]
-    fn test_file() {
+    fn test_create_file() {
         let files: Vec<&str> = vec![
             "test/mypy_gclogger.py", 
             "test/recursive_classes.py", 
@@ -3086,15 +3121,66 @@ mod tests {
             }, // end of file
         ]; // end of files
         
+        // Initialize writer.
+        let stdout_handle = std::io::stdout();
+        let mut writer: BufWriter<Box<dyn Write>> = BufWriter::new(Box::new(stdout_handle));
+        
         // Read lines from files and create File objects from them, then compare the File objects to the File objects in the vector above.
         for (filename, expected_file) in std::iter::zip(files, expected_results) {
             // Create file object from filename.
             let lines_str: Vec<String> = get_lines_for_test(filename);
             let lines: Vec<Line> = vec_str_to_vec_line(&lines_str);
-            let file: File = File::new(filename, &lines);
+            let file: File = File::new(filename, &lines, &mut writer);
             
             // Compare file object to expected file object.
             assert_eq!(file, expected_file);
+        }
+    }
+    
+    #[test]
+    fn test_file_print_warnings() {
+        // Initialize writer.
+        let stdout_handle = std::io::stdout();
+        let mut writer: BufWriter<Box<dyn Write>> = BufWriter::new(Box::new(stdout_handle));
+        
+        // Initialize warning message signature.
+        let warning_sig: Vec<u8> = vec![087, 065, 082, 078, 073, 078, 071, 058, 032];
+        
+        let filenames: Vec<(&str, bool)> = vec![
+            ("something.notpy", false), 
+            ("something_no_extension", false), 
+            ("test/file_import_with_space.py", true), 
+            ("test/file_from_import_with_space.py", true), 
+        ];
+        for (filename, actually_read_file) in filenames.iter() {
+            // Create file.
+            let source: Vec<Line> = match actually_read_file {
+                true => {
+                    let lines_str: Vec<String> = get_lines_for_test(filename);
+                    vec_str_to_vec_line(&lines_str)
+                }, 
+                false => {
+                    Vec::new()
+                }
+            };
+            let _: File = File::new(filename, &source, &mut writer);
+            
+            // Get last line from writer buffer.
+            let mut buffer: Vec<u8> = writer.buffer().to_vec();
+            buffer.pop(); // Pop newline from last message.
+            let mut last_line: Vec<u8> = Vec::new();
+            for b in buffer.iter().rev() {
+                if b == &b'\n' {
+                    break;
+                }
+                last_line.push(*b);
+            }
+            let last_line: Vec<u8> = last_line.into_iter().rev().collect();
+            
+            // Check if last line starts with the warning message signature.
+            for (index, n) in warning_sig.iter().enumerate() {
+                assert_eq!(n, last_line.get(index).unwrap());
+            }
         }
     }
     

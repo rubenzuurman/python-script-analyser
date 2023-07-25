@@ -1,8 +1,13 @@
 use std::env;
+use std::io::{BufWriter, Write};
 
-use python_script_analyser::{File, get_file_lines, vec_str_to_vec_line};
+use python_script_analyser::{File, get_file_lines, vec_str_to_vec_line, write_to_writer, flush_writer};
 
 fn main() {
+    // Initialize writer.
+    let stdout_handle = std::io::stdout();
+    let mut writer: BufWriter<Box<dyn Write>> = BufWriter::new(Box::new(stdout_handle));
+    
     // Get command line arguments.
     let args: Vec<String> = env::args().collect();
     
@@ -27,9 +32,15 @@ fn main() {
     
     // TODO: Do one pass over lines to check for indentation inconsistencies.
     
+    
     // Handle file.
-    let file: File = File::new(filename, &vec_str_to_vec_line(&lines));
+    let file: File = File::new(filename, &vec_str_to_vec_line(&lines), &mut writer);
     
     // Print file data.
-    println!("{}", file.as_string(0));
+    let fas: String = file.as_string(0);
+    let fas_bytes: &[u8] = fas.as_bytes();
+    write_to_writer(&mut writer, fas_bytes);
+    
+    // Flush writer.
+    flush_writer(&mut writer);
 }

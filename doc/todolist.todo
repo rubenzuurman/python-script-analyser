@@ -19,6 +19,7 @@ Misc:
 
 ＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿
 Archive:
+ ✔ Implement writing to a generic stream instead of the standard output (I can redirect the generic stream to standard output anyway). @created(23-07-24 15:14) @done (23-07-25 22:42) @project(Misc)
  ✔ Remove empty lines at the start of File::new(), Class::new(), and Function::new(), or rework them all to check for empty lines in the source lines loop. (I chose to remove empty lines at the start of the constructor methods.) @created(23-07-23 19:36) @done (23-07-23 20:39) @project(Misc)
  ✔ Implement Class::default() method and implement return default() class if the class definition does not match. @created(23-07-23 19:38) @done (23-07-23 20:31) @project(Misc)
  ✔ Change name and parent match to a let match statement in Class::new(). @created(23-07-23 19:37) @done (23-07-23 20:31) @project(Misc)
