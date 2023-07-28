@@ -2,8 +2,8 @@ import math, random as rnd
 from os import listdir
 from fruits import apple as a, banana as b, mango as m
 
-FPS = 60
-VSYNC = True
+FPS = 60        # Frames per second
+VSYNC = True    # Vertical sync
 
 class Rect:
     

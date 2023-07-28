@@ -1,6 +1,5 @@
 Tests:
  ☐ Add tests for get methods of structs. @created(23-07-21 17:44)
- ☐ Add tests to check that regex patterns do not match when they should not match. @created(23-07-23 19:04)
 
 Misc:
  ☐ Add support for group imports like this: @created(23-07-17 18:59)
@@ -16,9 +15,11 @@ Misc:
    '        'ComplexWarning', 'TooHardError', 'AxisError']'
  ☐ Change from looping over characters to looping over grapheme clusters where applicable. @created(23-07-20 16:24)
  ☐ Change unwraps to expects to avoid panicking without any description. @created(23-07-23 13:22)
-
 ＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿
 Archive:
+ ✔ Detect multiline comments ('''/""") and ignore them, it is only a comment if the line is not an assignment. (Any code before start/after end """ on the same line is invalid, except for comments which are valid after the closing """. Also comments with """ cannot be part of a normal line.) (Single quotations also work apparantly.) @created(23-07-26 14:03) @done (23-07-28 18:27) @project(Misc)
+ ✔ Detect single line comments (#) and ignore them. @created(23-07-26 13:21) @done (23-07-28 18:26) @project(Misc)
+ ✔ Add tests to check that regex patterns do not match when they should not match. @created(23-07-23 19:04) @done (23-07-26 13:21) @project(Tests)
  ✔ Implement writing to a generic stream instead of the standard output (I can redirect the generic stream to standard output anyway). @created(23-07-24 15:14) @done (23-07-25 22:42) @project(Misc)
  ✔ Remove empty lines at the start of File::new(), Class::new(), and Function::new(), or rework them all to check for empty lines in the source lines loop. (I chose to remove empty lines at the start of the constructor methods.) @created(23-07-23 19:36) @done (23-07-23 20:39) @project(Misc)
  ✔ Implement Class::default() method and implement return default() class if the class definition does not match. @created(23-07-23 19:38) @done (23-07-23 20:31) @project(Misc)

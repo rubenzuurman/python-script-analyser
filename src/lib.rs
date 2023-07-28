@@ -179,14 +179,15 @@ impl Assignment {
     
     pub fn new(line: &Line) -> Option<Self> {
         // This function checks if the line contains an assignment. If it does, it results Some(Assignment), else it returns None. This Option<T> can then be matched by the caller.
-        match line.is_assignment() {
+        let dummy_line: Line = Line::new(1, &File::remove_single_line_comment_from_line(&line));
+        match dummy_line.is_assignment() {
             // Return none if the line does not contain an assignment.
             None => return None, 
             // Return some if the line does contain an assignment.
             Some(equals_index) => {
                 // Split line text at index.
-                let var: &str = &line.get_text().as_str()[..equals_index];
-                let val: &str = &line.get_text().as_str()[equals_index+1..];
+                let var: &str = &dummy_line.get_text().as_str()[..equals_index];
+                let val: &str = &dummy_line.get_text().as_str()[equals_index+1..];
                 
                 // Check if the variable name contains a type hint.
                 if var.contains(":") {
@@ -309,6 +310,61 @@ impl StructureTracker {
     
 }
 
+pub struct MultilineCommentTracker {
+    active: bool
+}
+
+impl MultilineCommentTracker {
+    
+    fn new() -> Self {
+        return MultilineCommentTracker {
+            active: false
+        };
+    }
+    
+    fn activate(&mut self) {
+        self.active = true;
+    }
+    
+    fn deactivate(&mut self) {
+        self.active = false;
+    }
+    
+    fn is_active(&self) -> bool {
+        return self.active;
+    }
+    
+    fn is_begin_of_multiline_comment(&self, line: &Line) -> bool {
+        // This method is only ever called when active is false.
+        // Check if this line is the start and/or end of a multiline comment.
+        let is_ml_comment_start: bool = File::line_is_multiline_comment_start(&line);
+        let is_ml_comment_end: bool = File::line_is_multiline_comment_end(&line);
+        
+        // Check if the line is start and end.
+        if is_ml_comment_start && is_ml_comment_end {
+            if line.get_text().matches("\"").count() >= 6 || line.get_text().matches("\'").count() >= 6 {
+                return false;
+            } else {
+                return true;
+            }
+        // Check if the line is only start.
+        } else if is_ml_comment_start {
+            return true;
+        // Check if the line is only end or none at all.
+        } else {
+            return false;
+        }
+    }
+    
+    fn is_end_of_multiline_comment(&self, line: &Line) -> bool {
+        // This method is only ever called when active is true.
+        // Check if this line is the end of a multiline comment.
+        return File::line_is_multiline_comment_end(&line);
+    }
+    
+}
+
+
 #[derive(Clone, Debug)]
 pub struct File {
     name: String, 
@@ -354,6 +410,7 @@ impl File {
         // Initialize structure tracker (used for tracking functions and classes).
         let mut function_tracker: StructureTracker = StructureTracker::new();
         let mut class_tracker: StructureTracker = StructureTracker::new();
+        let mut ml_comment_tracker: MultilineCommentTracker = MultilineCommentTracker::new();
         
         // Iterate over lines and detect things.
         let mut imports: Vec<String> = Vec::new();
@@ -406,6 +463,20 @@ impl File {
                 continue;
             }
             
+            // Check if this line is the start or end of a multiline comment.
+            if ml_comment_tracker.is_active() {
+                if ml_comment_tracker.is_end_of_multiline_comment(&line) {
+                    ml_comment_tracker.deactivate();
+                }
+            } else {
+                if ml_comment_tracker.is_begin_of_multiline_comment(&line) {
+                    ml_comment_tracker.activate();
+                }
+            }
+            if ml_comment_tracker.is_active() {
+                continue;
+            }
+            
             // Detect imports.
             match File::line_is_import(&line, writer) {
                 Some(a) => {
@@ -417,34 +488,25 @@ impl File {
             }
             
             // Detect global variables.
-            match File::line_is_global_var(&line) {
-                Some(_) => {    
-                    match Assignment::new(line) {
-                        Some(a) => global_vars.push(a), 
-                        None => write_to_writer(writer, format!("WARNING: '{}' should have been an assignment, but wasn't. This is not supposed to happen. (File::new())\n", line.as_string(0)).as_bytes()), 
-                    }
-                }, 
-                None => ()
+            if File::line_is_global_var(&line) {
+                match Assignment::new(line) {
+                    Some(a) => global_vars.push(a), 
+                    None => write_to_writer(writer, format!("WARNING: '{}' should have been an assignment, but wasn't. This is not supposed to happen. (File::new())\n", line.as_string(0)).as_bytes()), 
+                }
             }
             
             // Detect functions.
-            match File::line_is_function_start(&line) {
-                Some(_) => {
-                    // Start function tracker.
-                    function_tracker.start();
-                    function_tracker.add_line(&line);
-                }, 
-                None => ()
+            if File::line_is_function_start(&line) {
+                // Start function tracker.
+                function_tracker.start();
+                function_tracker.add_line(&line);
             }
             
             // Detect classes.
-            match File::line_is_class_start(&line) {
-                Some(_) => {
-                    // Start class tracker.
-                    class_tracker.start();
-                    class_tracker.add_line(&line);
-                }, 
-                None => ()
+            if File::line_is_class_start(&line) {
+                // Start class tracker.
+                class_tracker.start();
+                class_tracker.add_line(&line);
             }
         }
         
@@ -485,9 +547,9 @@ impl File {
         let re_from_import = Regex::new(PATTERN_FROM_IMPORT).unwrap();
         
         // Check if the line matches any of the regexes.
-        let line_text: &String = line.get_text();
-        let import_capt = re_import.captures(line_text);
-        let from_import_capt = re_from_import.captures(line_text);
+        let line_text: String = File::remove_single_line_comment_from_line(&line);
+        let import_capt = re_import.captures(&line_text);
+        let from_import_capt = re_from_import.captures(&line_text);
         
         match import_capt {
             Some(c) => {
@@ -512,7 +574,11 @@ impl File {
                     modules_vec.remove(*index);
                 }
                 
-                return Some(modules_vec);
+                // Return none if no modules are left.
+                match modules_vec.len() {
+                    0 => return None, 
+                    _ => return Some(modules_vec), 
+                }
             }, 
             None => {
                 match from_import_capt {
@@ -538,7 +604,11 @@ impl File {
                             objects_vec.remove(*index);
                         }
                         
-                        return Some(objects_vec);
+                        // Return none if no objects are left.
+                        match objects_vec.len() {
+                            0 => return None, 
+                            _ => return Some(objects_vec), 
+                        }
                     }, 
                     None => return None
                 }
@@ -546,37 +616,124 @@ impl File {
         }
     }
     
-    fn line_is_global_var(line: &Line) -> Option<String> {
+    fn line_is_global_var(line: &Line) -> bool {
         // Initialize and match regex.
         let re_global_var = Regex::new(PATTERN_GLOBAL_VARIABLE).unwrap();
-        let global_var_capt = re_global_var.captures(line.get_text());
+        let line_text: String = File::remove_single_line_comment_from_line(&line);
+        let global_var_capt = re_global_var.captures(&line_text);
         
         match global_var_capt {
-            Some(c) => return Some(c["varname"].to_string()), 
-            None => return None
+            Some(_) => return true, 
+            None => return false
         }
     }
     
-    fn line_is_function_start(line: &Line) -> Option<bool> {
+    fn line_is_function_start(line: &Line) -> bool {
         // Initialize and match regex.
         let re_function_definition = Regex::new(PATTERN_FUNCTION_START).unwrap();
-        let function_definition_capt = re_function_definition.captures(line.get_text());
+        let line_text: String = File::remove_single_line_comment_from_line(&line);
+        let function_definition_capt = re_function_definition.captures(&line_text);
         
         match function_definition_capt {
-            Some(_) => return Some(true), 
-            None => return None
+            Some(_) => return true, 
+            None => return false
         }
     }
     
-    fn line_is_class_start(line: &Line) -> Option<bool> {
+    fn line_is_class_start(line: &Line) -> bool {
         // Initialize and match regex.
         let re_class_definition = Regex::new(PATTERN_CLASS_START).unwrap();
-        let class_definition_capt = re_class_definition.captures(line.get_text());
+        let line_text: String = File::remove_single_line_comment_from_line(line);
+        let class_definition_capt = re_class_definition.captures(&line_text);
         
         match class_definition_capt {
-            Some(_) => return Some(true), 
-            None => return None
+            Some(_) => return true, 
+            None => return false
         }
+    }
+    
+    fn remove_single_line_comment_from_line(line: &Line) -> String {
+        // Detect location of first hashtag not in quotations.
+        let mut in_single_quotations: bool = false;
+        let mut in_double_quotations: bool = false;
+        
+        // Loop over characters in the line.
+        let mut result: String = "".to_string();
+        for (index, c) in line.get_text().chars().enumerate() {
+            match c {
+                '\'' => {
+                    if !in_double_quotations {
+                        if index == 0 {
+                            in_single_quotations = !in_single_quotations;
+                        } else if index == 1 {
+                            let prev_char: char = line.get_text().chars().nth(index - 1).unwrap();
+                            if !(prev_char == '\\') {
+                                in_single_quotations = !in_single_quotations;
+                            }
+                        } else {
+                            // Check if the last two characters were also single quotations, indicating the start or end of a multiline comment.
+                            let prev_char: char = line.get_text().chars().nth(index - 1).unwrap();
+                            let prev_prev_char: char = line.get_text().chars().nth(index - 2).unwrap();
+                            if !(prev_char == '\'' && prev_prev_char == '\'') {
+                                if !(prev_char == '\\') {
+                                    in_single_quotations = !in_single_quotations;
+                                }
+                            }
+                        }
+                    }
+                }, 
+                '\"' => {
+                    if !in_single_quotations {
+                        if index == 0 {
+                            in_double_quotations = !in_double_quotations;
+                        } else if index == 1 {
+                            let prev_char: char = line.get_text().chars().nth(index - 1).unwrap();
+                            if !(prev_char == '\\') {
+                                in_double_quotations = !in_double_quotations;
+                            }
+                        } else {
+                            // Check if the last two characters were also double quotations, indicating the start or end of a multiline comment.
+                            let prev_char: char = line.get_text().chars().nth(index - 1).unwrap();
+                            let prev_prev_char: char = line.get_text().chars().nth(index - 2).unwrap();
+                            if !(prev_char == '\"' && prev_prev_char == '\"') {
+                                if !(prev_char == '\\') {
+                                    in_double_quotations = !in_double_quotations;
+                                }
+                            }
+                        }
+                    }
+                }, 
+                '#' => {
+                    if !(in_single_quotations || in_double_quotations) {
+                        return result;
+                    }
+                }, 
+                _ => ()
+            }
+            result.push(c);
+        }
+        
+        return result;
+    }
+    
+    fn line_is_multiline_comment_start(line: &Line) -> bool {
+        return line.get_text().trim_start().starts_with("\"\"\"") 
+            || line.get_text().trim_start().starts_with("\'\'\'");
+    }
+    
+    fn line_is_multiline_comment_end(line: &Line) -> bool {
+        // This function is only ever called if a multiline comment start was already detected. This means that, if this is the end of the multiline comment, it either ends with """/''' or ends with """/''' followed by some number of whitespaces and then a comment.
+        // Get line text and line text without optional comment.
+        let text_raw: String = line.get_text().to_string();
+        let text_no_comment: String = File::remove_single_line_comment_from_line(&line);
+        
+        // Check if the line text ends in quotations or the line text without optional comment ends in quotations.
+        let condition1: bool = text_raw.trim_end().ends_with("\"\"\"") 
+            || text_raw.trim_end().ends_with("\'\'\'");
+        let condition2: bool = text_no_comment.trim_end().ends_with("\"\"\"") 
+            || text_no_comment.trim_end().ends_with("\'\'\'");
+        
+        return condition1 || condition2;
     }
     
     pub fn get_name(&self) -> &String {
@@ -692,7 +849,7 @@ impl Function {
         }
         
         // Get first line of the source.
-        let first_line: &str = source.get(0).unwrap().get_text();
+        let first_line: &str = &File::remove_single_line_comment_from_line(source.get(0).unwrap());
         
         // Initialize regex for getting the function name and the parameters from the function definition.
         let re_function_start = Regex::new(PATTERN_FUNCTION_START).unwrap();
@@ -876,6 +1033,7 @@ impl Function {
         
         // Initialize function tracker.
         let mut function_tracker: StructureTracker = StructureTracker::new();
+        let mut ml_comment_tracker: MultilineCommentTracker = MultilineCommentTracker::new();
         
         // Iterate over lines and detect function start.
         let mut functions: Vec<Function> = Vec::new();
@@ -906,19 +1064,30 @@ impl Function {
                 continue;
             }
             
+            // Check if this line is the start or end of a multiline comment.
+            if ml_comment_tracker.is_active() {
+                if ml_comment_tracker.is_end_of_multiline_comment(&line) {
+                    ml_comment_tracker.deactivate();
+                }
+            } else {
+                if ml_comment_tracker.is_begin_of_multiline_comment(&line) {
+                    ml_comment_tracker.activate();
+                }
+            }
+            if ml_comment_tracker.is_active() {
+                continue;
+            }
+            
             // Detect function start.
-            match File::line_is_function_start(&line) {
-                Some(_) => {
-                    // Check if this is the first line of the function.
-                    if index == 0 {
-                        continue;
-                    }
-                    
-                    // Start function tracker.
-                    function_tracker.start();
-                    function_tracker.add_line(&line);
-                }, 
-                None => ()
+            if File::line_is_function_start(&line) {
+                // Check if this is the first line of the function.
+                if index == 0 {
+                    continue;
+                }
+                
+                // Start function tracker.
+                function_tracker.start();
+                function_tracker.add_line(&line);
             }
         }
         
@@ -1045,7 +1214,7 @@ impl Class {
         }
         
         // Get first line of the source.
-        let first_line: &str = source.get(0).unwrap().get_text();
+        let first_line: &str = &File::remove_single_line_comment_from_line(source.get(0).unwrap());
         
         // Initialize regex for getting the class name when no parent class/a parent class is present.
         let re_class_start = Regex::new(PATTERN_CLASS_START).unwrap();
@@ -1069,33 +1238,20 @@ impl Class {
         let second_line: &Line = source.get(1).unwrap();
         let num_spaces: usize = File::get_indentation_length(second_line);
         
-        // Initialize regex and scan source.
-        let re_class_var = Regex::new(PATTERN_CLASS_VARIABLE.replace("INDENTATION", format!("{}", num_spaces).as_str()).as_str()).unwrap();
-        let mut variables: Vec<Assignment> = Vec::new();
-        for line in source.iter() {
-            let class_var_captures = re_class_var.captures(line.get_text());
-            match class_var_captures {
-                Some(_) => {
-                    match Assignment::new(line) {
-                        Some(a) => variables.push(a), 
-                        None => write_to_writer(writer, format!("WARNING: '{}' should have been an assignment, but wasn't. This is not supposed to happen. (Class::new())\n", line.as_string(0)).as_bytes()), 
-                    }
-                }
-                None => continue
-            }
-        }
-        
         // Initialize structure tracker (used for tracking methods).
         let mut method_tracker: StructureTracker = StructureTracker::new();
         let mut class_tracker: StructureTracker = StructureTracker::new();
+        let mut ml_comment_tracker: MultilineCommentTracker = MultilineCommentTracker::new();
         
         // Initialize methods vector.
         let mut methods: Vec<Function> = Vec::new();
         let mut classes: Vec<Class> = Vec::new();
+        let mut variables: Vec<Assignment> = Vec::new();
         
         // Initialize regex objects for methods and classes.
         let re_function_start = Regex::new(PATTERN_FUNCTION_START).unwrap();
         let re_class_start = Regex::new(PATTERN_CLASS_START).unwrap();
+        let re_class_var = Regex::new(PATTERN_CLASS_VARIABLE.replace("INDENTATION", format!("{}", num_spaces).as_str()).as_str()).unwrap();
         
         // Scan source for class methods.
         for (index, line) in source.iter().enumerate() {
@@ -1146,8 +1302,23 @@ impl Class {
                 continue;
             }
             
+            // Check if this line is the start or end of a multiline comment.
+            if ml_comment_tracker.is_active() {
+                if ml_comment_tracker.is_end_of_multiline_comment(&line) {
+                    ml_comment_tracker.deactivate();
+                }
+            } else {
+                if ml_comment_tracker.is_begin_of_multiline_comment(&line) {
+                    ml_comment_tracker.activate();
+                }
+            }
+            if ml_comment_tracker.is_active() {
+                continue;
+            }
+            
             // Check for method start.
-            let function_start_capt = re_function_start.captures(line.get_text());
+            let line_text: String = File::remove_single_line_comment_from_line(&line);
+            let function_start_capt = re_function_start.captures(&line_text);
             match function_start_capt {
                 Some(_) => {
                     method_tracker.start();
@@ -1160,13 +1331,24 @@ impl Class {
                     }
                     
                     // Check for class start.
-                    let class_start_capt = re_class_start.captures(line.get_text());
+                    let class_start_capt = re_class_start.captures(&line_text);
                     match class_start_capt {
                         Some(_) => {
                             class_tracker.start();
                             class_tracker.add_line(&line);
                         }, 
-                        None => continue
+                        None => {
+                            let class_var_captures = re_class_var.captures(&line_text);
+                            match class_var_captures {
+                                Some(_) => {
+                                    match Assignment::new(line) {
+                                        Some(a) => variables.push(a), 
+                                        None => write_to_writer(writer, format!("WARNING: '{}' should have been an assignment, but wasn't. This is not supposed to happen. (Class::new())\n", line.as_string(0)).as_bytes()), 
+                                    }
+                                }, 
+                                None => continue
+                            }
+                        }
                     }
                 }
             }
@@ -1509,8 +1691,8 @@ mod tests {
                 Line::new(2, "from os import listdir"), 
                 Line::new(3, "from fruits import apple as a, banana as b, mango as m"), 
                 Line::new(4, ""), 
-                Line::new(5, "FPS = 60"), 
-                Line::new(6, "VSYNC = True"), 
+                Line::new(5, "FPS = 60        # Frames per second"), 
+                Line::new(6, "VSYNC = True    # Vertical sync"), 
                 Line::new(7, ""), 
                 Line::new(8, "class Rect:"), 
                 Line::new(9, "    "), 
@@ -1541,8 +1723,8 @@ mod tests {
                 Line::new(1, "import math, random as rnd"),
                 Line::new(2, "from os import listdir"),
                 Line::new(3, "from fruits import apple as a, banana as b, mango as m"),
-                Line::new(5, "FPS = 60"),
-                Line::new(6, "VSYNC = True"),
+                Line::new(5, "FPS = 60        # Frames per second"),
+                Line::new(6, "VSYNC = True    # Vertical sync"),
                 Line::new(8, "class Rect:"),
                 Line::new(10, "    def __init__(self, a):"),
                 Line::new(11, "        self.a = a"),
@@ -1604,17 +1786,21 @@ mod tests {
     #[test]
     fn test_regex_pattern_import() {
         // Test PATTERN_IMPORT.
-        // Construct hashmap containing strings to match.
-        let mut test_strings: HashMap<u32, &str> = HashMap::new();
-        test_strings.insert(0, "import math");
-        test_strings.insert(1, "   import     sys     \t,    \t re \t  , \t\tdatetime\t   ,  \t   zoneinfo  \t ");
-        test_strings.insert(2, "  \t  import a  \t  ,   b   \t\t\t   ");
-        test_strings.insert(3, "        \t\timport  \t time  ");
-        test_strings.insert(4, "import mypy.errorcodes as codes");
-        test_strings.insert(5, "    import mypy.checkexpr");
-        test_strings.insert(6, "import glob as fileglob");
-        test_strings.insert(7, "    import tomllib");
-        test_strings.insert(8, "         \t\t\t\t   import       banaaaan     as     \t\t\t    appel     \t\t\t      ");
+        // Construct hashmap containing strings to match and if the string should match.
+        let mut test_strings: HashMap<u32, (bool, &str)> = HashMap::new();
+        test_strings.insert(0, (true, "import math"));
+        test_strings.insert(1, (true, "   import     sys     \t,    \t re \t  , \t\tdatetime\t   ,  \t   zoneinfo  \t "));
+        test_strings.insert(2, (true, "  \t  import a  \t  ,   b   \t\t\t   "));
+        test_strings.insert(3, (true, "        \t\timport  \t time  "));
+        test_strings.insert(4, (true, "import mypy.errorcodes as codes"));
+        test_strings.insert(5, (true, "    import mypy.checkexpr"));
+        test_strings.insert(6, (true, "import glob as fileglob"));
+        test_strings.insert(7, (true, "    import tomllib"));
+        test_strings.insert(8, (true, "         \t\t\t\t   import       banaaaan     as     \t\t\t    appel     \t\t\t      "));
+        test_strings.insert(9, (false, "i m p o r t b a n a a n"));
+        test_strings.insert(10, (false, "imp ort math"));
+        test_strings.insert(11, (false, "from something import something else"));
+        test_strings.insert(12, (false, "from x import y"));
         
         // Construct hashmap containing hashmaps containing values of named groups.
         let mut test_matches: HashMap<u32, HashMap<&str, &str>> = HashMap::new();
@@ -1627,19 +1813,31 @@ mod tests {
         test_matches.insert(6, HashMap::from([("modules", "glob as fileglob")]));
         test_matches.insert(7, HashMap::from([("modules", "tomllib")]));
         test_matches.insert(8, HashMap::from([("modules", "banaaaan     as     \t\t\t    appel     \t\t\t      ")]));
+        test_matches.insert(9, HashMap::from([("modules", "")]));
+        test_matches.insert(10, HashMap::from([("modules", "")]));
+        test_matches.insert(11, HashMap::from([("modules", "")]));
+        test_matches.insert(12, HashMap::from([("modules", "")]));
         
         // Run tests.
         let re = Regex::new(PATTERN_IMPORT).unwrap();
-        for (key_str, value_str) in test_strings.iter() {
+        for (key_str, (should_match, value_str)) in test_strings.iter() {
             let capt = re.captures(value_str);
             let map = test_matches.get(&key_str).unwrap();
             match capt {
                 Some(a) => {
-                    for (key, value) in map.iter() {
-                        assert_eq!(&&a[*key], value);
+                    if *should_match {
+                        for (key, value) in map.iter() {
+                            assert_eq!(&&a[*key], value);
+                        }
+                    } else {
+                        panic!("ERROR: String '{}' should not have matched 'PATTERN_IMPORT', but did.", value_str);
                     }
                 }, 
-                None => panic!("ERROR: String '{}' should have matched 'PATTERN_IMPORT', but didn't.", value_str)
+                None => {
+                    if *should_match {
+                        panic!("ERROR: String '{}' should have matched 'PATTERN_IMPORT', but didn't.", value_str);
+                    }
+                }
             }
         }
     }
@@ -1647,17 +1845,21 @@ mod tests {
     fn test_regex_pattern_from_import() {
         // Test PATTERN_FROM_IMPORT.
         // Construct hashmap containing strings to match.
-        let mut test_strings: HashMap<u32, &str> = HashMap::new();
-        test_strings.insert(0, "from a import b as c");
-        test_strings.insert(1, "   \t\t\t    from     \t d\timport     e    as   f   ,   g   ,   h   \t\t\t   as i  \t ");
-        test_strings.insert(2, "from j import k aas, baas as p oop, f ish as dog, clo se as you       tube");
-        test_strings.insert(3, "from mypy.options import PER_MODULE_OPTIONS, Options");
-        test_strings.insert(4, "from     numpy.core.multiarray     import    \t\t _flagdict    \t,  \t flagsobj  \t     \t\t\t");
-        test_strings.insert(5, "from mypy.infer import ArgumentInferContext, infer_function_type_arguments, infer_type_arguments");
-        test_strings.insert(6, "from mypy import applytype, erasetype, join, message_registry, nodes, operators, types");
-        test_strings.insert(7, "   \t\t\t from    \t\t        \t\t\t\t\t\t\t   mypy.semanal_enum        import         \t\t\t\tENUM_BASES");
-        test_strings.insert(8, "    from . import _distributor_init");
-        test_strings.insert(9, "        from numpy.__config__ import show as show_config");
+        let mut test_strings: HashMap<u32, (bool, &str)> = HashMap::new();
+        test_strings.insert(0, (true, "from a import b as c"));
+        test_strings.insert(1, (true, "   \t\t\t    from     \t d\timport     e    as   f   ,   g   ,   h   \t\t\t   as i  \t "));
+        test_strings.insert(2, (true, "from j import k aas, baas as p oop, f ish as dog, clo se as you       tube"));
+        test_strings.insert(3, (true, "from mypy.options import PER_MODULE_OPTIONS, Options"));
+        test_strings.insert(4, (true, "from     numpy.core.multiarray     import    \t\t _flagdict    \t,  \t flagsobj  \t     \t\t\t"));
+        test_strings.insert(5, (true, "from mypy.infer import ArgumentInferContext, infer_function_type_arguments, infer_type_arguments"));
+        test_strings.insert(6, (true, "from mypy import applytype, erasetype, join, message_registry, nodes, operators, types"));
+        test_strings.insert(7, (true, "   \t\t\t from    \t\t        \t\t\t\t\t\t\t   mypy.semanal_enum        import         \t\t\t\tENUM_BASES"));
+        test_strings.insert(8, (true, "    from . import _distributor_init"));
+        test_strings.insert(9, (true, "        from numpy.__config__ import show as show_config"));
+        test_strings.insert(10, (false, "import banana"));
+        test_strings.insert(11, (false, "a = 5"));
+        test_strings.insert(12, (false, "fr om banaan import yellow"));
+        test_strings.insert(13, (false, "from mango im port orange"));
         
         // Construct hashmap containing hashmaps containing values of named groups.
         let mut test_matches: HashMap<u32, HashMap<&str, &str>> = HashMap::new();
@@ -1671,20 +1873,32 @@ mod tests {
         test_matches.insert(7, HashMap::from([("module", "mypy.semanal_enum"), ("objects", "ENUM_BASES")]));
         test_matches.insert(8, HashMap::from([("module", "."), ("objects", "_distributor_init")]));
         test_matches.insert(9, HashMap::from([("module", "numpy.__config__"), ("objects", "show as show_config")]));
-        
+        test_matches.insert(10, HashMap::from([]));
+        test_matches.insert(11, HashMap::from([]));
+        test_matches.insert(12, HashMap::from([]));
+        test_matches.insert(13, HashMap::from([]));
         
         // Run tests.
         let re = Regex::new(PATTERN_FROM_IMPORT).unwrap();
-        for (key_str, value_str) in test_strings.iter() {
+        for (key_str, (should_match, value_str)) in test_strings.iter() {
             let capt = re.captures(value_str);
             let map = test_matches.get(&key_str).unwrap();
             match capt {
                 Some(a) => {
-                    for (key, value) in map.iter() {
-                        assert_eq!(&&a[*key], value);
+                    if *should_match {
+                        for (key, value) in map.iter() {
+                            assert_eq!(&&a[*key], value);
+                        }
+                    } else {
+                        panic!("ERROR: String '{}' should not have matched 'PATTERN_FROM_IMPORT', but did.", value_str);
                     }
+                    
                 }, 
-                None => panic!("ERROR: String '{}' should have matched 'PATTERN_FROM_IMPORT', but didn't.", value_str)
+                None => {
+                    if *should_match {
+                        panic!("ERROR: String '{}' should have matched 'PATTERN_FROM_IMPORT', but didn't.", value_str);
+                    }
+                }
             }
         }
     }
@@ -1693,16 +1907,21 @@ mod tests {
     fn test_regex_pattern_global_variable() {
         // Test PATTERN_GLOBAL_VARIABLE.
         // Construct hashmap containing strings to match.
-        let mut test_strings: HashMap<u32, &str> = HashMap::new();
-        test_strings.insert(0, "_flagnames    =    ['C_CONTIGUOUS', 'F_CONTIGUOUS'    , 'ALIGNED'   ,   'WRITEABLE', 'OWNDATA', 'WRITEBACKIFCOPY']");
-        test_strings.insert(1, "_pointer_type_cache = {}");
-        test_strings.insert(2, "    __NUMPY_SETUP__ = False");
-        test_strings.insert(3, "    __all__ = ['exceptions', 'ModuleDeprecationWarning', 'VisibleDeprecationWarning', 'ComplexWarning', 'TooHardError', 'AxisError']");
-        test_strings.insert(4, "GLOB1 = 1");
-        test_strings.insert(5, "    GLOB_PARAMETER = 100 ** 2");
-        test_strings.insert(6, "GLOB_NAME = \"Bananas are pretty good\"");
-        test_strings.insert(7, "GLOB_OBJ: int = time.time()");
-        test_strings.insert(8, "       GLOBAL_MAP: List[Tuple[np.uint16, List[str, int]], str]     \t\t\t    =     []   \t\t\t \t   \t");
+        let mut test_strings: HashMap<u32, (bool, &str)> = HashMap::new();
+        test_strings.insert(0, (true, "_flagnames    =    ['C_CONTIGUOUS', 'F_CONTIGUOUS'    , 'ALIGNED'   ,   'WRITEABLE', 'OWNDATA', 'WRITEBACKIFCOPY']"));
+        test_strings.insert(1, (true, "_pointer_type_cache = {}"));
+        test_strings.insert(2, (true, "    __NUMPY_SETUP__ = False"));
+        test_strings.insert(3, (true, "    __all__ = ['exceptions', 'ModuleDeprecationWarning', 'VisibleDeprecationWarning', 'ComplexWarning', 'TooHardError', 'AxisError']"));
+        test_strings.insert(4, (true, "GLOB1 = 1"));
+        test_strings.insert(5, (true, "    GLOB_PARAMETER = 100 ** 2"));
+        test_strings.insert(6, (true, "GLOB_NAME = \"Bananas are pretty good\""));
+        test_strings.insert(7, (true, "GLOB_OBJ: int = time.time()"));
+        test_strings.insert(8, (true, "       GLOBAL_MAP: List[Tuple[np.uint16, List[str, int]], str]     \t\t\t    =     []   \t\t\t \t   \t"));
+        test_strings.insert(9, (false, "  global\"5=5\"[6=6](3=\"5=6\"){g: \"4=3\"}"));
+        test_strings.insert(10, (false, "import banaan"));
+        test_strings.insert(11, (false, "from x import y"));
+        test_strings.insert(12, (false, "class X():"));
+        test_strings.insert(13, (false, "def func(a=5, b=5, c=\"16.5\", d=\'Hello world!\'):"));
         
         // Construct hashmap containing hashmaps containing values of named groups.
         let mut test_matches: HashMap<u32, HashMap<&str, &str>> = HashMap::new();
@@ -1715,19 +1934,32 @@ mod tests {
         test_matches.insert(6, HashMap::from([("varname", "GLOB_NAME")]));
         test_matches.insert(7, HashMap::from([("varname", "GLOB_OBJ")]));
         test_matches.insert(8, HashMap::from([("varname", "GLOBAL_MAP")]));
+        test_matches.insert(9, HashMap::from([("varname", "")]));
+        test_matches.insert(10, HashMap::from([("varname", "")]));
+        test_matches.insert(11, HashMap::from([("varname", "")]));
+        test_matches.insert(12, HashMap::from([("varname", "")]));
+        test_matches.insert(13, HashMap::from([("varname", "")]));
         
         // Run tests.
         let re = Regex::new(PATTERN_GLOBAL_VARIABLE).unwrap();
-        for (key_str, value_str) in test_strings.iter() {
+        for (key_str, (should_match, value_str)) in test_strings.iter() {
             let capt = re.captures(value_str);
             let map = test_matches.get(&key_str).unwrap();
             match capt {
                 Some(a) => {
-                    for (key, value) in map.iter() {
-                        assert_eq!(&&a[*key], value);
+                    if *should_match {
+                        for (key, value) in map.iter() {
+                            assert_eq!(&&a[*key], value);
+                        }
+                    } else {
+                        panic!("ERROR: String '{}' should not have matched 'PATTERN_GLOBAL_VARIABLE', but did.", value_str);
                     }
                 }, 
-                None => panic!("ERROR: String '{}' should have matched 'PATTERN_GLOBAL_VARIABLE', but didn't.", value_str)
+                None => {
+                    if *should_match {
+                        panic!("ERROR: String '{}' should have matched 'PATTERN_GLOBAL_VARIABLE', but didn't.", value_str);
+                    }
+                }
             }
         }
     }
@@ -1736,17 +1968,22 @@ mod tests {
     fn test_regex_pattern_function_start() {
         // Test PATTERN_FUNCTION_START.
         // Construct hashmap containing strings to match.
-        let mut test_strings: HashMap<u32, &str> = HashMap::new();
-        test_strings.insert(0, "def zeros(shape, dtype=None, order='C'):");
-        test_strings.insert(1, "def eye(n,M=None, k=0, dtype=float, order='C'):");
-        test_strings.insert(2, "    def __array_finalize__(self, obj):");
-        test_strings.insert(3, "    def __mul__(self, other):  ");
-        test_strings.insert(4, "    def sum(self, axis=None, dtype=None, out=None):");
-        test_strings.insert(5, "    def prod(self, axis=None, dtype=None, out=None):");
-        test_strings.insert(6, "    def run_case(self, testcase: DataDrivenTestCase) -> None:");
-        test_strings.insert(7, "def columns(self, *cols: ColumnClause[Any], **types: Union[TypeEngine[Any], Type[TypeEngine[Any]]]) -> TextAsFrom: ");
-        test_strings.insert(8, "    def self_group(self: _CL, against: Optional[Any] = ...) -> Union[_CL, Grouping[Any]]:");
-        test_strings.insert(9, "         \t\t\tdef    func   (self, a=[5, 6, \"a\"], b, c, d: List[Tuple[str]]=(5, 6, 7, banaan), _str: bool=False)    ->     List[Tuple[str, int], str]  :   \t\t \t\t    ");
+        let mut test_strings: HashMap<u32, (bool, &str)> = HashMap::new();
+        test_strings.insert(0, (true, "def zeros(shape, dtype=None, order='C'):"));
+        test_strings.insert(1, (true, "def eye(n,M=None, k=0, dtype=float, order='C'):"));
+        test_strings.insert(2, (true, "    def __array_finalize__(self, obj):"));
+        test_strings.insert(3, (true, "    def __mul__(self, other):  "));
+        test_strings.insert(4, (true, "    def sum(self, axis=None, dtype=None, out=None):"));
+        test_strings.insert(5, (true, "    def prod(self, axis=None, dtype=None, out=None):"));
+        test_strings.insert(6, (true, "    def run_case(self, testcase: DataDrivenTestCase) -> None:"));
+        test_strings.insert(7, (true, "def columns(self, *cols: ColumnClause[Any], **types: Union[TypeEngine[Any], Type[TypeEngine[Any]]]) -> TextAsFrom: "));
+        test_strings.insert(8, (true, "    def self_group(self: _CL, against: Optional[Any] = ...) -> Union[_CL, Grouping[Any]]:"));
+        test_strings.insert(9, (true, "         \t\t\tdef    func   (self, a=[5, 6, \"a\"], b, c, d: List[Tuple[str]]=(5, 6, 7, banaan), _str: bool=False)    ->     List[Tuple[str, int], str]  :   \t\t \t\t    "));
+        test_strings.insert(10, (false, "class Rect(Shape):"));
+        test_strings.insert(11, (false, "import foo"));
+        test_strings.insert(12, (false, "from bar import baz"));
+        test_strings.insert(13, (false, "x = 5"));
+        test_strings.insert(14, (false, "x += 5"));
         
         // Construct hashmap containing hashmaps containing values of named groups.
         let mut test_matches: HashMap<u32, HashMap<&str, &str>> = HashMap::new();
@@ -1760,19 +1997,32 @@ mod tests {
         test_matches.insert(7, HashMap::from([("indentation", ""), ("name", "columns"), ("params", "self, *cols: ColumnClause[Any], **types: Union[TypeEngine[Any], Type[TypeEngine[Any]]]")]));
         test_matches.insert(8, HashMap::from([("indentation", "    "), ("name", "self_group"), ("params", "self: _CL, against: Optional[Any] = ...")]));
         test_matches.insert(9, HashMap::from([("indentation", "         \t\t\t"), ("name", "func"), ("params", "self, a=[5, 6, \"a\"], b, c, d: List[Tuple[str]]=(5, 6, 7, banaan), _str: bool=False")]));
+        test_matches.insert(10, HashMap::from([("indentation", ""), ("name", ""), ("params", "")]));
+        test_matches.insert(11, HashMap::from([("indentation", ""), ("name", ""), ("params", "")]));
+        test_matches.insert(12, HashMap::from([("indentation", ""), ("name", ""), ("params", "")]));
+        test_matches.insert(13, HashMap::from([("indentation", ""), ("name", ""), ("params", "")]));
+        test_matches.insert(14, HashMap::from([("indentation", ""), ("name", ""), ("params", "")]));
         
         // Run tests.
         let re = Regex::new(PATTERN_FUNCTION_START).unwrap();
-        for (key_str, value_str) in test_strings.iter() {
+        for (key_str, (should_match, value_str)) in test_strings.iter() {
             let capt = re.captures(value_str);
             let map = test_matches.get(&key_str).unwrap();
             match capt {
                 Some(a) => {
-                    for (key, value) in map.iter() {
-                        assert_eq!(&&a[*key], value);
+                    if *should_match {
+                        for (key, value) in map.iter() {
+                            assert_eq!(&&a[*key], value);
+                        }
+                    } else {
+                        panic!("ERROR: String '{}' should not have matched 'PATTERN_FUNCTION_START', but did.", value_str);
                     }
                 }, 
-                None => panic!("ERROR: String '{}' should have matched 'PATTERN_FUNCTION_START', but didn't.", value_str)
+                None => {
+                    if *should_match {
+                        panic!("ERROR: String '{}' should have matched 'PATTERN_FUNCTION_START', but didn't.", value_str);
+                    }
+                }
             }
         }
     }
@@ -1781,15 +2031,20 @@ mod tests {
     fn test_regex_pattern_class_start() {
         // Test PATTERN_CLASS_START.
         // Construct hashmap containing strings to match.
-        let mut test_strings: HashMap<u32, &str> = HashMap::new();
-        test_strings.insert(0, "class BindParameter(ColumnElement[_T]):");
-        test_strings.insert(1, "class Triangle:");
-        test_strings.insert(2, "    class Rect(Shape):");
-        test_strings.insert(3, "class ModuleWrapper(nn.Module):");
-        test_strings.insert(4, "class UntypedStorage(torch._C.StorageBase, _StorageBase):");
-        test_strings.insert(5, "                  \t\t\tclass Library:    \t\t  \t\t");
-        test_strings.insert(6, "class SourceChangeWarning(Warning):");
-        test_strings.insert(7, "     \t\t\t\t\t\t            class ETKernelIndex:   ");
+        let mut test_strings: HashMap<u32, (bool, &str)> = HashMap::new();
+        test_strings.insert(0, (true, "class BindParameter(ColumnElement[_T]):"));
+        test_strings.insert(1, (true, "class Triangle:"));
+        test_strings.insert(2, (true, "    class Rect(Shape):"));
+        test_strings.insert(3, (true, "class ModuleWrapper(nn.Module):"));
+        test_strings.insert(4, (true, "class UntypedStorage(torch._C.StorageBase, _StorageBase):"));
+        test_strings.insert(5, (true, "                  \t\t\tclass Library:    \t\t  \t\t"));
+        test_strings.insert(6, (true, "class SourceChangeWarning(Warning):"));
+        test_strings.insert(7, (true, "     \t\t\t\t\t\t            class ETKernelIndex:   "));
+        test_strings.insert(8, (false, "def __init__(self, a=5, b={a: \"b=5\"}):"));
+        test_strings.insert(9, (false, "import foo"));
+        test_strings.insert(10, (false, "from bar import baz"));
+        test_strings.insert(11, (false, "x = 5"));
+        test_strings.insert(12, (false, "x += 5"));
         
         // Construct hashmap containing hashmaps containing values of named groups.
         let mut test_matches: HashMap<u32, HashMap<&str, &str>> = HashMap::new();
@@ -1801,23 +2056,36 @@ mod tests {
         test_matches.insert(5, HashMap::from([("indentation", "                  \t\t\t"), ("name", "Library"), ("parent", "")]));
         test_matches.insert(6, HashMap::from([("indentation", ""), ("name", "SourceChangeWarning"), ("parent", "Warning")]));
         test_matches.insert(7, HashMap::from([("indentation", "     \t\t\t\t\t\t            "), ("name", "ETKernelIndex"), ("parent", "")]));
+        test_matches.insert(8, HashMap::from([("indentation", ""), ("name", ""), ("parent", "")]));
+        test_matches.insert(9, HashMap::from([("indentation", ""), ("name", ""), ("parent", "")]));
+        test_matches.insert(10, HashMap::from([("indentation", ""), ("name", ""), ("parent", "")]));
+        test_matches.insert(11, HashMap::from([("indentation", ""), ("name", ""), ("parent", "")]));
+        test_matches.insert(12, HashMap::from([("indentation", ""), ("name", ""), ("parent", "")]));
         
         // Run tests.
         let re = Regex::new(PATTERN_CLASS_START).unwrap();
-        for (key_str, value_str) in test_strings.iter() {
+        for (key_str, (should_match, value_str)) in test_strings.iter() {
             let capt = re.captures(value_str);
             let map = test_matches.get(&key_str).unwrap();
             match capt {
                 Some(a) => {
-                    for (key, value) in map.iter() {
-                        if key == &"parent" {
-                            assert_eq!(&a.name("parent").map(|m| m.as_str()).unwrap_or(""), value);
-                        } else {
-                            assert_eq!(&&a[*key], value);
+                    if *should_match {
+                        for (key, value) in map.iter() {
+                            if key == &"parent" {
+                                assert_eq!(&a.name("parent").map(|m| m.as_str()).unwrap_or(""), value);
+                            } else {
+                                assert_eq!(&&a[*key], value);
+                            }
                         }
+                    } else {
+                        panic!("ERROR: String '{}' should not have matched 'PATTERN_CLASS_START', but did.", value_str);
                     }
                 }, 
-                None => panic!("ERROR: String '{}' should have matched 'PATTERN_CLASS_START', but didn't.", value_str)
+                None => {
+                    if *should_match {
+                        panic!("ERROR: String '{}' should have matched 'PATTERN_CLASS_START', but didn't.", value_str);
+                    }
+                }
             }
         }
     }
@@ -1826,15 +2094,22 @@ mod tests {
     fn test_regex_pattern_class_variable() {
         // Test PATTERN_CLASS_VARIABLE.
         // Construct hashmap containing strings to match.
-        let mut test_strings: HashMap<u32, &str> = HashMap::new();
-        test_strings.insert(0, "    arg_meta: Tuple[ETKernelKeyOpArgMeta, ...] = ()");
-        test_strings.insert(1, "    default: bool = False");
-        test_strings.insert(2, "    version: int = KERNEL_KEY_VERSION");
-        test_strings.insert(3, "        CLASS_VAR   =     5");
-        test_strings.insert(4, "    instructions = 1");
-        test_strings.insert(5, "    MAXDIM = 21201");
-        test_strings.insert(6, "        CLASS_STR   = \t\t\t\t  \"Bananas are very                  spacyyyyyyyyy\"    ");
-        test_strings.insert(7, "    deserialized_objects = {}");
+        let mut test_strings: HashMap<u32, (bool, &str)> = HashMap::new();
+        test_strings.insert(0, (true, "    arg_meta: Tuple[ETKernelKeyOpArgMeta, ...] = ()"));
+        test_strings.insert(1, (true, "    default: bool = False"));
+        test_strings.insert(2, (true, "    version: int = KERNEL_KEY_VERSION"));
+        test_strings.insert(3, (true, "        CLASS_VAR   =     5"));
+        test_strings.insert(4, (true, "    instructions = 1"));
+        test_strings.insert(5, (true, "    MAXDIM = 21201"));
+        test_strings.insert(6, (true, "        CLASS_STR   = \t\t\t\t  \"Bananas are very                  spacyyyyyyyyy\"    "));
+        test_strings.insert(7, (true, "    deserialized_objects = {}"));
+        test_strings.insert(8, (false, "def __init__(self, a=5, b={a: \"b=5\"}):"));
+        test_strings.insert(9, (false, "import foo"));
+        test_strings.insert(10, (false, "     from bar import baz"));
+        test_strings.insert(11, (false, "  x += 5"));
+        test_strings.insert(12, (false, "    x = 5"));
+        test_strings.insert(13, (false, "       y = \"B = 5\""));
+        test_strings.insert(14, (false, "    \"\"\"B = 5\"\"\""));
         
         // Construct hashmap containing the indentations for each string to replace in the regex.
         let mut test_string_indentations: HashMap<u32, u32> = HashMap::new();
@@ -1846,6 +2121,13 @@ mod tests {
         test_string_indentations.insert(5, 4);
         test_string_indentations.insert(6, 8);
         test_string_indentations.insert(7, 4);
+        test_string_indentations.insert(8, 0);
+        test_string_indentations.insert(9, 5);
+        test_string_indentations.insert(10, 2);
+        test_string_indentations.insert(11, 4);
+        test_string_indentations.insert(12, 5);
+        test_string_indentations.insert(13, 16);
+        test_string_indentations.insert(14, 4);
         
         // Construct hashmap containing hashmaps containing values of named groups.
         let mut test_matches: HashMap<u32, HashMap<&str, &str>> = HashMap::new();
@@ -1857,20 +2139,35 @@ mod tests {
         test_matches.insert(5, HashMap::from([("varname", "MAXDIM"), ("varvalue", "21201")]));
         test_matches.insert(6, HashMap::from([("varname", "CLASS_STR"), ("varvalue", "\"Bananas are very                  spacyyyyyyyyy\"    ")]));
         test_matches.insert(7, HashMap::from([("varname", "deserialized_objects"), ("varvalue", "{}")]));
+        test_matches.insert(8, HashMap::from([("varname", ""), ("varvalue", "")]));
+        test_matches.insert(9, HashMap::from([("varname", ""), ("varvalue", "")]));
+        test_matches.insert(10, HashMap::from([("varname", ""), ("varvalue", "")]));
+        test_matches.insert(11, HashMap::from([("varname", ""), ("varvalue", "")]));
+        test_matches.insert(12, HashMap::from([("varname", ""), ("varvalue", "")]));
+        test_matches.insert(13, HashMap::from([("varname", ""), ("varvalue", "")]));
+        test_matches.insert(14, HashMap::from([("varname", ""), ("varvalue", "")]));
         
         // Run tests.
-        for (key_str, value_str) in test_strings.iter() {
+        for (key_str, (should_match, value_str)) in test_strings.iter() {
             let num_spaces = test_string_indentations.get(&key_str).unwrap();
             let re = Regex::new(PATTERN_CLASS_VARIABLE.replace("INDENTATION", format!("{}", num_spaces).as_str()).as_str()).unwrap();
             let capt = re.captures(value_str);
             let map = test_matches.get(&key_str).unwrap();
             match capt {
                 Some(a) => {
-                    for (key, value) in map.iter() {
-                        assert_eq!(&&a[*key], value);
+                    if *should_match {
+                        for (key, value) in map.iter() {
+                            assert_eq!(&&a[*key], value);
+                        }
+                    } else {
+                        panic!("ERROR: String '{}' should not have matched 'PATTERN_CLASS_VARIABLE', but did.", value_str);
                     }
                 }, 
-                None => panic!("ERROR: String '{}' should have matched 'PATTERN_CLASS_VARIABLE', but didn't.", value_str)
+                None => {
+                    if *should_match {
+                        panic!("ERROR: String '{}' should have matched 'PATTERN_CLASS_VARIABLE', but didn't.", value_str);
+                    }
+                }
             }
         }
     }
@@ -2429,6 +2726,7 @@ mod tests {
             "test/function_at_end_of_file_no_newline.py", 
             "test/create_function_weird_cases.py", 
             "test/create_function_typo.py", 
+            "test/create_function_comments_everywhere.py", 
         ];
         
         let expected_results: Vec<Function> = vec![
@@ -2518,6 +2816,40 @@ mod tests {
                 parameters: vec![], 
                 functions: vec![], 
                 source: vec![], 
+            }, 
+            Function {
+                name: "function".to_string(), 
+                parameters: vec![
+                    "a=5".to_string(), 
+                    "b=6".to_string(), 
+                    "c=[5, 6, 7, 8.5]".to_string(), 
+                    "d={\"a\": 5, \"b\": 7}".to_string(), 
+                ], 
+                functions: vec![], 
+                source: vec![
+                    Line::new(1, "def function(a=5, b=6, c=[5, 6, 7, 8.5], d={\"a\": 5, \"b\": 7}): # Some comment."),
+                    Line::new(2, "    \"\"\"Single line multiline comment.\"\"\""),
+                    Line::new(3, "    \"\"\""),
+                    Line::new(4, "    Multiline multiline comment."),
+                    Line::new(5, "    More text."),
+                    Line::new(6, "    \"\"\""),
+                    Line::new(8, "    # Single line comment."),
+                    Line::new(9, "    print(a, b, c, d)"),
+                    Line::new(11, "    # Return something if 5 and 6."),
+                    Line::new(12, "    if a == 5 and b == 6:"),
+                    Line::new(13, "        \"\"\"Some more comments.\"\"\""),
+                    Line::new(14, "        return True"),
+                    Line::new(15, "    # Return something else if not 5 and 6."),
+                    Line::new(16, "    else:"),
+                    Line::new(17, "        return False or c[3] == 8.5"),
+                    Line::new(18, "    \"\"\""),
+                    Line::new(19, "    A = 5"),
+                    Line::new(20, "    \"\"\""),
+                    Line::new(22, "    a = \"\"\""),
+                    Line::new(23, "        This is a multiline string literal."),
+                    Line::new(24, "        Another line."),
+                    Line::new(25, "    \"\"\"")
+                ]
             }
         ];
         
@@ -2541,6 +2873,7 @@ mod tests {
         let files: Vec<&str> = vec![
             "test/create_class.py", 
             "test/create_class_typo.py", 
+            "test/create_class_comments_everywhere.py", 
         ];
         
         let expected_results: Vec<Class> = vec![
@@ -2582,6 +2915,36 @@ mod tests {
                 parent: "".to_string(), 
                 variables: vec![], 
                 methods: vec![], 
+                classes: vec![]
+            }, 
+            Class {
+                name: "Rect".to_string(), 
+                parent: "object".to_string(), 
+                variables: vec![
+                    Assignment::new(&Line::new(15, "    GLOBAL_VARIABLE = 6")).unwrap(), 
+                    Assignment::new(&Line::new(17, "    SOME_VAR = \"Banaan\" # Comment a=5.")).unwrap(), 
+                ], 
+                methods: vec![
+                    Function {
+                        name: "__init__".to_string(), 
+                        parameters: vec![
+                            "self".to_string(), 
+                            "a=5".to_string(), 
+                            "b=GLOBAL_VARIABLE".to_string(), 
+                            "c=8".to_string()
+                        ], 
+                        functions: vec![], 
+                        source: vec![
+                            Line::new(19, "    def __init__(self, a=5, b=GLOBAL_VARIABLE, c=8): # Banaan."),
+                            Line::new(20, "        \"\"\""),
+                            Line::new(21, "        This is a function description."),
+                            Line::new(22, "        \"\"\""),
+                            Line::new(23, "        self.a = a # Foo"),
+                            Line::new(24, "        self.b = b # Bar"),
+                            Line::new(25, "        print(f\"a * b: {a * b}\") # Baz"),
+                        ]
+                    }
+                ], 
                 classes: vec![]
             }
         ];
@@ -2680,6 +3043,7 @@ mod tests {
             "test/class_in_middle_of_file_no_newline.py", 
             "test/recursive_functions.py", 
             "test/file_as_string.py", 
+            "test/create_file_comments_everywhere.py", 
         ];
         
         let expected_results: Vec<File> = vec![
@@ -3085,8 +3449,8 @@ mod tests {
                 name: "file_as_string".to_string(), 
                 imports: vec!["math".to_string(), "rnd".to_string(), "listdir".to_string(), "a".to_string(), "b".to_string(), "m".to_string()], 
                 global_variables: vec![
-                    Assignment {name: "FPS".to_string(), value: "60".to_string(), source: Line::new(5, "FPS = 60")}, 
-                    Assignment {name: "VSYNC".to_string(), value: "True".to_string(), source: Line::new(6, "VSYNC = True")}, 
+                    Assignment {name: "FPS".to_string(), value: "60".to_string(), source: Line::new(5, "FPS = 60        # Frames per second")}, 
+                    Assignment {name: "VSYNC".to_string(), value: "True".to_string(), source: Line::new(6, "VSYNC = True    # Vertical sync")}, 
                 ], 
                 functions: vec![
                     Function {
@@ -3119,6 +3483,88 @@ mod tests {
                     }
                 ]
             }, // end of file
+            File {
+                name: "create_file_comments_everywhere".to_string(), 
+                imports: vec![
+                    "math".to_string(), 
+                    "listdir".to_string(), 
+                    "sys".to_string(), 
+                    "np".to_string(), 
+                    "cmd_args".to_string(), 
+                ], 
+                global_variables: vec![
+                    Assignment {name: "FPS".to_string(), value: "60".to_string(), source: Line::new(23, "FPS = 60")}, 
+                    Assignment {name: "VSYNC".to_string(), value: "True".to_string(), source: Line::new(24, "VSYNC = True")}, 
+                    Assignment {name: "SOME_SETTING".to_string(), value: "\"setting_a=1;setting_b=100;setting_c=True;\"".to_string(), source: Line::new(25, "SOME_SETTING = \"setting_a=1;setting_b=100;setting_c=True;\"")}, 
+                ], 
+                functions: vec![
+                    Function {
+                        name: "main".to_string(), 
+                        parameters: vec![], 
+                        functions: vec![], 
+                        source: vec![
+                            Line::new(56, "def main():"),
+                            Line::new(57, "    \"\"\""),
+                            Line::new(58, "    The main function is the entry point of the application."),
+                            Line::new(59, "    \"\"\""),
+                            Line::new(60, "    # Initialize class."),
+                            Line::new(61, "    c = Class(12, 15)"),
+                            Line::new(62, "    print(c.get_components())"),
+                            Line::new(63, "    print(c)"),
+                        ]
+                    }
+                ], 
+                classes: vec![
+                    Class {
+                        name: "Class".to_string(), 
+                        parent: "object".to_string(), 
+                        variables: vec![
+                            Assignment {name: "CLASS_VAR".to_string(), value: "\"Hello world!\"".to_string(), source: Line::new(39, "    CLASS_VAR = \"Hello world!\"")}, 
+                        ], 
+                        methods: vec![
+                            Function {
+                                name: "__init__".to_string(), 
+                                parameters: vec![
+                                    "self".to_string(), 
+                                    "a".to_string(), 
+                                    "b".to_string(), 
+                                    "c=[4, 5]".to_string()
+                                ], 
+                                functions: vec![], 
+                                source: vec![
+                                    Line::new(41, "    def __init__(self, a, b, c=[4, 5]): # Some comment."),
+                                    Line::new(42, "        \"\"\""),
+                                    Line::new(43, "        Initialize class."),
+                                    Line::new(44, "        \"\"\""),
+                                    Line::new(45, "        self.a = a"),
+                                    Line::new(46, "        self.b = b"),
+                                    Line::new(47, "        self.c = c"),
+                                    Line::new(48, "        self.d = a * c[0] + b * c[1]"),
+                                ]
+                            }, 
+                            Function {
+                                name: "get_components".to_string(), 
+                                parameters: vec!["self".to_string()], 
+                                functions: vec![], 
+                                source: vec![
+                                    Line::new(50, "    def get_components(self) -> List[int]:"),
+                                    Line::new(51, "        return [self.a, self.b, self.c, self.d]"),
+                                ]
+                            }, 
+                            Function {
+                                name: "__str__".to_string(), 
+                                parameters: vec!["self".to_string()], 
+                                functions: vec![], 
+                                source: vec![
+                                    Line::new(53, "    def __str__(self) -> str:"),
+                                    Line::new(54, "        return f\"Class {{a: {a}, b: {b}, c: {c}, d: {d}}}\""),
+                                ]
+                            }
+                        ], 
+                        classes: vec![]
+                    }
+                ]
+            }, // end of file
         ]; // end of files
         
         // Initialize writer.
@@ -3134,6 +3580,277 @@ mod tests {
             
             // Compare file object to expected file object.
             assert_eq!(file, expected_file);
+        }
+    }
+    
+    #[test]
+    fn test_file_functions() {
+        // Initialize writer.
+        let stdout_handle = std::io::stdout();
+        let mut writer: BufWriter<Box<dyn Write>> = BufWriter::new(Box::new(stdout_handle));
+        
+        // Test File::line_is_import.
+        let lines: Vec<Line> = vec![
+            Line::new(1, "import math, random as rnd, os    # Some comment"), 
+            Line::new(2, "from os import listdir as ld # Comment"), 
+            Line::new(3, "from a import b, c, d as e, f as g # Comments should not disturb anything"), 
+            Line::new(4, "import m ath, b a n aan"), 
+            Line::new(5, "imp ort math, banaan"), 
+            Line::new(6, "from banaan import a pp le"), 
+            Line::new(7, "from ban aan import apple"), 
+            Line::new(8, "fr om banaan import apple # Foo"), 
+            Line::new(9, "from banaan imp ort apple    # Bar"), 
+            Line::new(1, "from banaan import apple # Baz"), 
+            Line::new(2, "import math # Some comment"), 
+            Line::new(3, "from a import b # Some comment"), 
+        ];
+        
+        let expected_results: Vec<Option<Vec<String>>> = vec![
+            Some(vec!["math".to_string(), "rnd".to_string(), "os".to_string()]), 
+            Some(vec!["ld".to_string()]), 
+            Some(vec!["b".to_string(), "c".to_string(), "e".to_string(), "g".to_string()]), 
+            None, 
+            None, 
+            None, 
+            None, 
+            None, 
+            None, 
+            Some(vec!["apple".to_string()]), 
+            Some(vec!["math".to_string()]), 
+            Some(vec!["b".to_string()]), 
+        ];
+        
+        for (line, result) in std::iter::zip(lines, expected_results) {
+            assert_eq!(File::line_is_import(&line, &mut writer), result);
+        }
+        
+        // Test File::line_is_global_var().
+        let lines: Vec<Line> = vec![
+            Line::new(1, "GLOB = \"Hello world!\""), 
+            Line::new(2, "GLOB"), 
+            Line::new(3, "a = 5 # Comment"), 
+            Line::new(4, "print(\"Foo\")"), 
+            Line::new(5, "a.b = 5"), 
+            Line::new(6, "g[5] = false"), 
+            Line::new(7, "b = [1, 2, 3, 4] # Foo"), 
+            Line::new(8, "c += 100"), 
+            Line::new(9, "import math"), 
+            Line::new(1, "from os import listdir"), 
+            Line::new(2, "def func(a=5, b=\"Hello world!\"):"), 
+            Line::new(3, "class Rect(object): # Define class."), 
+            Line::new(4, "GLOBAL_VAR = 5 # Comment."), 
+            Line::new(5, "import math # import."), 
+            Line::new(6, "from os import listdir # import."), 
+            Line::new(7, "def func(): # Define func."), 
+            Line::new(8, " b = 5 # Bar"), 
+            Line::new(9, "      foo = [bar, baz] # Baz"), 
+        ];
+        
+        let expected_results: Vec<bool> = vec![
+            true, 
+            false, 
+            true, 
+            false, 
+            false, 
+            false, 
+            true, 
+            false, 
+            false, 
+            false, 
+            false, 
+            false, 
+            true, 
+            false, 
+            false, 
+            false, 
+            true, 
+            true, 
+        ];
+        
+        for (line, result) in std::iter::zip(lines, expected_results) {
+            println!("Line is global variable: '{}'", line.as_string(0).trim_end_matches("\n"));
+            assert_eq!(File::line_is_global_var(&line), result);
+        }
+        
+        // Test File::line_is_function_start().
+        let lines: Vec<Line> = vec![
+            Line::new(1, "  def func(a=5, b=6):  "), 
+            Line::new(2, "def func(c=\"Foo\", d=\'Bar\', e=[Baz, hi, there]):  "), 
+            Line::new(3, "    def func(a=5,         b=6):  "), 
+            Line::new(4, "  def func(a=5,         b=6):  # Some comment."), 
+            Line::new(5, "import math # Comment"), 
+            Line::new(6, "from os import listdir # Comment"), 
+            Line::new(7, "class Rect: # Comment"), 
+            Line::new(8, "# def func():"), 
+        ];
+        
+        let expected_results: Vec<bool> = vec![
+            true, 
+            true, 
+            true, 
+            true, 
+            false, 
+            false, 
+            false, 
+            false, 
+        ];
+        
+        for (line, result) in std::iter::zip(lines, expected_results) {
+            println!("Line is function start: '{}'", line.as_string(0).trim_end_matches("\n"));
+            assert_eq!(File::line_is_function_start(&line), result);
+        }
+        
+        // Test File::line_is_class_start().
+        let lines: Vec<Line> = vec![
+            Line::new(1, "class Rect:"), 
+            Line::new(2, "  class Shape(PointCollection):"), 
+            Line::new(2, "    class Shape:"), 
+            Line::new(2, "class Triangle(Shape): # Some comment."), 
+            Line::new(3, "# class SomeClass:"), 
+            Line::new(4, "    # class Class(SubClass): # Some comment."), 
+            Line::new(5, "import math"), 
+            Line::new(6, "from os import listdir"), 
+            Line::new(7, "def func():  # class Class:"), 
+            Line::new(8, "    class Class:"), 
+        ];
+        
+        let expected_results: Vec<bool> = vec![
+            true, 
+            true, 
+            true, 
+            true, 
+            false, 
+            false, 
+            false, 
+            false, 
+            false, 
+            true, 
+        ];
+        
+        for (line, result) in std::iter::zip(lines, expected_results) {
+            println!("Line is class start: '{}'", line.as_string(0).trim_end_matches("\n"));
+            assert_eq!(File::line_is_class_start(&line), result);
+        }
+        
+        // Test File::remove_single_line_comment_from_line().
+        let lines: Vec<Line> = vec![
+            Line::new(1, "import math # Import math lib."), 
+            Line::new(2, "    from os import listdir # This is a from import."), 
+            Line::new(3, "def func(): # Some comment"), 
+            Line::new(4, "  class Rect(Shape):   # Comment"), 
+            Line::new(5, "# Comment only line"), 
+            Line::new(6, "Hello there\"\"\" # Some extra comment"), 
+            Line::new(7, "text = \"Some text including #'s \\\"\\\"\" # A real comment"), 
+            Line::new(8, "text = \'Hello there \" ###\\\'s everywhere \' # Comment"), 
+            Line::new(9, "some = [a, b, \"Foo\", \"Bar\\\"#\", \'\"#Baz\"\'] # Real comment"), 
+            Line::new(1, "multiline single quotation comment \'\'\' # Some comment"), 
+            Line::new(2, "\'\'\' Start of multiline single quotation comment # Comment"), 
+            Line::new(3, "  Hi there  "), 
+            Line::new(4, "\"\"\" Start of multiline double quotation comment"), 
+            Line::new(5, "    a = \"Hi #\\\'quotations\\\' # there #\"     # Some comment"), 
+        ];
+        
+        let expected_results: Vec<&str> = vec![
+            "import math ", 
+            "    from os import listdir ", 
+            "def func(): ", 
+            "  class Rect(Shape):   ", 
+            "", 
+            "Hello there\"\"\" ", 
+            "text = \"Some text including #\'s \\\"\\\"\" ", 
+            "text = \'Hello there \" ###\\\'s everywhere \' ", 
+            "some = [a, b, \"Foo\", \"Bar\\\"#\", \'\"#Baz\"\'] ", 
+            "multiline single quotation comment \'\'\' ", 
+            "\'\'\' Start of multiline single quotation comment ", 
+            "  Hi there  ", 
+            "\"\"\" Start of multiline double quotation comment", 
+            "    a = \"Hi #\\\'quotations\\\' # there #\"     ", 
+        ];
+        
+        for (line, result) in std::iter::zip(lines, expected_results) {
+            assert_eq!(File::remove_single_line_comment_from_line(&line), result.to_string());
+        }
+        
+        // Test File::line_is_multiline_comment_start().
+        let lines: Vec<Line> = vec![
+            Line::new(1, "\"\"\" Comment "), 
+            Line::new(1, "\'\'\' Comment "), 
+            Line::new(2, "    \"\"\" Comment # Comment"), 
+            Line::new(2, "    \'\'\' Comment # Comment"), 
+            Line::new(3, "       \"\"\" \t\t\tComment"), 
+            Line::new(3, "       \'\'\' \t\t\tComment"), 
+            Line::new(4, "a = \"\"\" Some multiline string start"), 
+            Line::new(4, "a = \'\'\' Some multiline string start"), 
+            Line::new(5, "import math"), 
+            Line::new(6, "from os import listdir, path"), 
+            Line::new(7, "def func(): # Hi"), 
+            Line::new(8, "class Rect(Shape):  # Some comment"), 
+            Line::new(9, "# Comment"), 
+            Line::new(1, "\"\"\""), 
+            Line::new(2, "    \"\"\""), 
+            Line::new(3, "a = \"Some string containing \\\"\\\"\\\" quotations\""), 
+        ];
+        
+        let expected_results: Vec<bool> = vec![
+            true, 
+            true, 
+            true, 
+            true, 
+            true, 
+            true, 
+            false, 
+            false, 
+            false, 
+            false, 
+            false, 
+            false, 
+            false, 
+            true, 
+            true, 
+            false, 
+        ];
+        
+        for (line, result) in std::iter::zip(lines, expected_results) {
+            println!("Line is multiline comment start: '{}'", line.as_string(0).trim_end_matches("\n"));
+            assert_eq!(File::line_is_multiline_comment_start(&line), result);
+        }
+        
+        // Test File::line_is_multiline_comment_end().
+        let lines: Vec<Line> = vec![
+            Line::new(1, "\"\"\""), 
+            Line::new(2, "    \"\"\""), 
+            Line::new(3, "# Something \"\"\""), 
+            Line::new(4, "class Triangle: \"\"\""), 
+            Line::new(5, "def func(): return \"\"\""), 
+            Line::new(6, "a = \"\"\" Multiline # string \"\"\""), 
+            Line::new(7, "import math"), 
+            Line::new(8, "from os import listdir # Comment"), 
+            Line::new(9, "\"\"\" Start of multiline comment"), 
+            Line::new(1, "def func():   # Comment"), 
+            Line::new(2, "class Rect: # Comment"), 
+            Line::new(3, "# Comment"), 
+            Line::new(4, "a = \"Some string containing \\\"\\\"\\\" quotations\""), 
+        ];
+        
+        let expected_results: Vec<bool> = vec![
+            true, 
+            true, 
+            true, 
+            true, 
+            true, 
+            true, 
+            false, 
+            false, 
+            false, 
+            false, 
+            false, 
+            false, 
+            false, 
+        ];
+        
+        for (line, result) in std::iter::zip(lines, expected_results) {
+            println!("Line is multiline comment end: '{}'", line.as_string(0).trim_end_matches("\n"));
+            assert_eq!(File::line_is_multiline_comment_end(&line), result);
         }
     }
     

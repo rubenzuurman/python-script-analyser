@@ -173,3 +173,14 @@ I am hesitant to merge dev into master right now because not 100% of branches ar
 **25-07-2023**
 22.36<br />
 Switched from printing messages to the standard output to adding them to a BufWriter wrapping anything which implements the Write trait. This could be the standard output or a file, for example.
+
+**26-07-2023**
+16.34<br />
+Done implementing the regex fail tests.
+
+**28-07-2023**
+01.29<br />
+Implemented support for single- and multiline comments inside functions and classes. The next thing to do is to implement tests for testing if single- and multiline comments work in the file struct.
+
+18.26<br />
+Single- and multiline comments are now fully supported.
