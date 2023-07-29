@@ -184,3 +184,10 @@ Implemented support for single- and multiline comments inside functions and clas
 
 18.26<br />
 Single- and multiline comments are now fully supported.
+
+22.09<br />
+Merged `dev` branch into `master` branch.
+
+**29-07-2023**
+12.25<br />
+Moved functions which do not need to be part of the File struct out of the File struct. Also renamed the test function.

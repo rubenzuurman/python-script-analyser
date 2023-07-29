@@ -179,7 +179,7 @@ impl Assignment {
     
     pub fn new(line: &Line) -> Option<Self> {
         // This function checks if the line contains an assignment. If it does, it results Some(Assignment), else it returns None. This Option<T> can then be matched by the caller.
-        let dummy_line: Line = Line::new(1, &File::remove_single_line_comment_from_line(&line));
+        let dummy_line: Line = Line::new(1, &remove_single_line_comment_from_line(&line));
         match dummy_line.is_assignment() {
             // Return none if the line does not contain an assignment.
             None => return None, 
@@ -337,8 +337,8 @@ impl MultilineCommentTracker {
     fn is_begin_of_multiline_comment(&self, line: &Line) -> bool {
         // This method is only ever called when active is false.
         // Check if this line is the start and/or end of a multiline comment.
-        let is_ml_comment_start: bool = File::line_is_multiline_comment_start(&line);
-        let is_ml_comment_end: bool = File::line_is_multiline_comment_end(&line);
+        let is_ml_comment_start: bool = line_is_multiline_comment_start(&line);
+        let is_ml_comment_end: bool = line_is_multiline_comment_end(&line);
         
         // Check if the line is start and end.
         if is_ml_comment_start && is_ml_comment_end {
@@ -359,7 +359,7 @@ impl MultilineCommentTracker {
     fn is_end_of_multiline_comment(&self, line: &Line) -> bool {
         // This method is only ever called when active is true.
         // Check if this line is the end of a multiline comment.
-        return File::line_is_multiline_comment_end(&line);
+        return line_is_multiline_comment_end(&line);
     }
     
 }
@@ -379,7 +379,16 @@ impl File {
     pub fn new(filepath: &str, source: &Vec<Line>, writer: &mut BufWriter<Box<dyn Write>>) -> Self {
         // Get filename from path.
         let path = Path::new(filepath);
-        let name: &OsStr = path.file_stem().unwrap();
+        let name: &str = match path.file_stem() {
+            Some(a) => match a.to_str() {
+                Some(b) => b, 
+                None => {
+                    write_to_writer(writer, format!("WARNING: Filename '{:?}' is not valid utf-8, leaving filename field empty.", a).as_bytes());
+                    ""
+                }
+            }, 
+            None => ""
+        };
         
         // Print warning if the extension is not 'py'.
         match path.extension().and_then(OsStr::to_str) {
@@ -419,7 +428,7 @@ impl File {
         let mut classes: Vec<Class> = Vec::new();
         for line in source.iter() {
             // Check if currently in a function or a class.
-            let indentation_length = File::get_indentation_length(line);
+            let indentation_length = get_indentation_length(line);
             if function_tracker.is_active() {
                 if !function_tracker.indentation_set() {
                     // Indentation length not set, set indentation length and add line.
@@ -478,7 +487,7 @@ impl File {
             }
             
             // Detect imports.
-            match File::line_is_import(&line, writer) {
+            match line_is_import(&line, writer) {
                 Some(a) => {
                     for module in a.iter() {
                         imports.push(module.clone());
@@ -488,7 +497,7 @@ impl File {
             }
             
             // Detect global variables.
-            if File::line_is_global_var(&line) {
+            if line_is_global_var(&line) {
                 match Assignment::new(line) {
                     Some(a) => global_vars.push(a), 
                     None => write_to_writer(writer, format!("WARNING: '{}' should have been an assignment, but wasn't. This is not supposed to happen. (File::new())\n", line.as_string(0)).as_bytes()), 
@@ -496,14 +505,14 @@ impl File {
             }
             
             // Detect functions.
-            if File::line_is_function_start(&line) {
+            if line_is_function_start(&line) {
                 // Start function tracker.
                 function_tracker.start();
                 function_tracker.add_line(&line);
             }
             
             // Detect classes.
-            if File::line_is_class_start(&line) {
+            if line_is_class_start(&line) {
                 // Start class tracker.
                 class_tracker.start();
                 class_tracker.add_line(&line);
@@ -524,216 +533,12 @@ impl File {
         
         // Return file.
         return File {
-            name: name.to_str().unwrap().to_string(), 
+            name: name.to_string(), 
             imports: imports, 
             global_variables: global_vars, 
             functions: functions, 
             classes: classes
         };
-    }
-    
-    fn get_indentation_length(line: &Line) -> usize {
-        // Initialize regex and capture.
-        let re_indentation = Regex::new(PATTERN_INDENTATION).unwrap();
-        let indentation_capt = re_indentation.captures(line.get_text());
-        
-        // Return indentation length.
-        return indentation_capt.unwrap()["indentation"].len();
-    }
-    
-    fn line_is_import(line: &Line, writer: &mut BufWriter<Box<dyn Write>>) -> Option<Vec<String>> {
-        // Initialize regex.
-        let re_import = Regex::new(PATTERN_IMPORT).unwrap();
-        let re_from_import = Regex::new(PATTERN_FROM_IMPORT).unwrap();
-        
-        // Check if the line matches any of the regexes.
-        let line_text: String = File::remove_single_line_comment_from_line(&line);
-        let import_capt = re_import.captures(&line_text);
-        let from_import_capt = re_from_import.captures(&line_text);
-        
-        match import_capt {
-            Some(c) => {
-                // Collect imports in a vector.
-                let mut modules_vec: Vec<String> = Vec::new();
-                let modules: String = String::from(&c["modules"]);
-                for module in modules.split(",") {
-                    // Split by " as ", if the module does not contain it, the split vector will have length 1, else it will have length 2. Regardless we want the last item in the vector.
-                    let module_split: Vec<&str> = module.split(" as ").collect();
-                    modules_vec.push(module_split.get(module_split.len() - 1).unwrap().trim().to_string());
-                }
-                
-                // Remove imports containing spaces, print warning in case they do.
-                let mut indices_to_remove: Vec<usize> = Vec::new();
-                for (index, module) in modules_vec.iter().enumerate() {
-                    if module.contains(char::is_whitespace) {
-                        write_to_writer(writer, format!("WARNING: Line {}: Import cannot contain spaces '{}' (specifically '{}').\n", line.get_number(), line.get_text(), module).as_bytes());
-                        indices_to_remove.push(index);
-                    }
-                }
-                for index in indices_to_remove.iter().rev() {
-                    modules_vec.remove(*index);
-                }
-                
-                // Return none if no modules are left.
-                match modules_vec.len() {
-                    0 => return None, 
-                    _ => return Some(modules_vec), 
-                }
-            }, 
-            None => {
-                match from_import_capt {
-                    Some(c) => {
-                        // Collect imports in a vector.
-                        let mut objects_vec: Vec<String> = Vec::new();
-                        let objects: String = String::from(&c["objects"]);
-                        for object in objects.split(",") {
-                            // Split by " as " (same as with modules).
-                            let object_split: Vec<&str> = object.split(" as ").collect();
-                            objects_vec.push(object_split.get(object_split.len() - 1).unwrap().trim().to_string());
-                        }
-                        
-                        // Remove imports containing spaces, print warning in case they do.
-                        let mut indices_to_remove: Vec<usize> = Vec::new();
-                        for (index, object) in objects_vec.iter().enumerate() {
-                            if object.contains(char::is_whitespace) {
-                                write_to_writer(writer, format!("WARNING: Line {}: Import cannot contain spaces '{}' (specifically '{}').\n", line.get_number(), line.get_text(), object).as_bytes());
-                                indices_to_remove.push(index);
-                            }
-                        }
-                        for index in indices_to_remove.iter().rev() {
-                            objects_vec.remove(*index);
-                        }
-                        
-                        // Return none if no objects are left.
-                        match objects_vec.len() {
-                            0 => return None, 
-                            _ => return Some(objects_vec), 
-                        }
-                    }, 
-                    None => return None
-                }
-            }
-        }
-    }
-    
-    fn line_is_global_var(line: &Line) -> bool {
-        // Initialize and match regex.
-        let re_global_var = Regex::new(PATTERN_GLOBAL_VARIABLE).unwrap();
-        let line_text: String = File::remove_single_line_comment_from_line(&line);
-        let global_var_capt = re_global_var.captures(&line_text);
-        
-        match global_var_capt {
-            Some(_) => return true, 
-            None => return false
-        }
-    }
-    
-    fn line_is_function_start(line: &Line) -> bool {
-        // Initialize and match regex.
-        let re_function_definition = Regex::new(PATTERN_FUNCTION_START).unwrap();
-        let line_text: String = File::remove_single_line_comment_from_line(&line);
-        let function_definition_capt = re_function_definition.captures(&line_text);
-        
-        match function_definition_capt {
-            Some(_) => return true, 
-            None => return false
-        }
-    }
-    
-    fn line_is_class_start(line: &Line) -> bool {
-        // Initialize and match regex.
-        let re_class_definition = Regex::new(PATTERN_CLASS_START).unwrap();
-        let line_text: String = File::remove_single_line_comment_from_line(line);
-        let class_definition_capt = re_class_definition.captures(&line_text);
-        
-        match class_definition_capt {
-            Some(_) => return true, 
-            None => return false
-        }
-    }
-    
-    fn remove_single_line_comment_from_line(line: &Line) -> String {
-        // Detect location of first hashtag not in quotations.
-        let mut in_single_quotations: bool = false;
-        let mut in_double_quotations: bool = false;
-        
-        // Loop over characters in the line.
-        let mut result: String = "".to_string();
-        for (index, c) in line.get_text().chars().enumerate() {
-            match c {
-                '\'' => {
-                    if !in_double_quotations {
-                        if index == 0 {
-                            in_single_quotations = !in_single_quotations;
-                        } else if index == 1 {
-                            let prev_char: char = line.get_text().chars().nth(index - 1).unwrap();
-                            if !(prev_char == '\\') {
-                                in_single_quotations = !in_single_quotations;
-                            }
-                        } else {
-                            // Check if the last two characters were also single quotations, indicating the start or end of a multiline comment.
-                            let prev_char: char = line.get_text().chars().nth(index - 1).unwrap();
-                            let prev_prev_char: char = line.get_text().chars().nth(index - 2).unwrap();
-                            if !(prev_char == '\'' && prev_prev_char == '\'') {
-                                if !(prev_char == '\\') {
-                                    in_single_quotations = !in_single_quotations;
-                                }
-                            }
-                        }
-                    }
-                }, 
-                '\"' => {
-                    if !in_single_quotations {
-                        if index == 0 {
-                            in_double_quotations = !in_double_quotations;
-                        } else if index == 1 {
-                            let prev_char: char = line.get_text().chars().nth(index - 1).unwrap();
-                            if !(prev_char == '\\') {
-                                in_double_quotations = !in_double_quotations;
-                            }
-                        } else {
-                            // Check if the last two characters were also double quotations, indicating the start or end of a multiline comment.
-                            let prev_char: char = line.get_text().chars().nth(index - 1).unwrap();
-                            let prev_prev_char: char = line.get_text().chars().nth(index - 2).unwrap();
-                            if !(prev_char == '\"' && prev_prev_char == '\"') {
-                                if !(prev_char == '\\') {
-                                    in_double_quotations = !in_double_quotations;
-                                }
-                            }
-                        }
-                    }
-                }, 
-                '#' => {
-                    if !(in_single_quotations || in_double_quotations) {
-                        return result;
-                    }
-                }, 
-                _ => ()
-            }
-            result.push(c);
-        }
-        
-        return result;
-    }
-    
-    fn line_is_multiline_comment_start(line: &Line) -> bool {
-        return line.get_text().trim_start().starts_with("\"\"\"") 
-            || line.get_text().trim_start().starts_with("\'\'\'");
-    }
-    
-    fn line_is_multiline_comment_end(line: &Line) -> bool {
-        // This function is only ever called if a multiline comment start was already detected. This means that, if this is the end of the multiline comment, it either ends with """/''' or ends with """/''' followed by some number of whitespaces and then a comment.
-        // Get line text and line text without optional comment.
-        let text_raw: String = line.get_text().to_string();
-        let text_no_comment: String = File::remove_single_line_comment_from_line(&line);
-        
-        // Check if the line text ends in quotations or the line text without optional comment ends in quotations.
-        let condition1: bool = text_raw.trim_end().ends_with("\"\"\"") 
-            || text_raw.trim_end().ends_with("\'\'\'");
-        let condition2: bool = text_no_comment.trim_end().ends_with("\"\"\"") 
-            || text_no_comment.trim_end().ends_with("\'\'\'");
-        
-        return condition1 || condition2;
     }
     
     pub fn get_name(&self) -> &String {
@@ -849,7 +654,7 @@ impl Function {
         }
         
         // Get first line of the source.
-        let first_line: &str = &File::remove_single_line_comment_from_line(source.get(0).unwrap());
+        let first_line: &str = &remove_single_line_comment_from_line(source.get(0).unwrap());
         
         // Initialize regex for getting the function name and the parameters from the function definition.
         let re_function_start = Regex::new(PATTERN_FUNCTION_START).unwrap();
@@ -1039,7 +844,7 @@ impl Function {
         let mut functions: Vec<Function> = Vec::new();
         for (index, line) in source.iter().enumerate() {
             // Check if currently in a function.
-            let indentation_length = File::get_indentation_length(line);
+            let indentation_length = get_indentation_length(line);
             if function_tracker.is_active() {
                 if !function_tracker.indentation_set() {
                     // Indentation length not set, set indentation length and add line.
@@ -1079,7 +884,7 @@ impl Function {
             }
             
             // Detect function start.
-            if File::line_is_function_start(&line) {
+            if line_is_function_start(&line) {
                 // Check if this is the first line of the function.
                 if index == 0 {
                     continue;
@@ -1214,7 +1019,7 @@ impl Class {
         }
         
         // Get first line of the source.
-        let first_line: &str = &File::remove_single_line_comment_from_line(source.get(0).unwrap());
+        let first_line: &str = &remove_single_line_comment_from_line(source.get(0).unwrap());
         
         // Initialize regex for getting the class name when no parent class/a parent class is present.
         let re_class_start = Regex::new(PATTERN_CLASS_START).unwrap();
@@ -1236,7 +1041,7 @@ impl Class {
         // Scan source for static variables.
         // Get indentation length from second line (empty lines are not present). The indentation pattern will always match.
         let second_line: &Line = source.get(1).unwrap();
-        let num_spaces: usize = File::get_indentation_length(second_line);
+        let num_spaces: usize = get_indentation_length(second_line);
         
         // Initialize structure tracker (used for tracking methods).
         let mut method_tracker: StructureTracker = StructureTracker::new();
@@ -1256,7 +1061,7 @@ impl Class {
         // Scan source for class methods.
         for (index, line) in source.iter().enumerate() {
             // Get indentation length.
-            let indentation_length: usize = File::get_indentation_length(line);
+            let indentation_length: usize = get_indentation_length(line);
             if method_tracker.is_active() {
                 if !method_tracker.indentation_set() {
                     // Indentation length not set, set indentation length and add line.
@@ -1317,7 +1122,7 @@ impl Class {
             }
             
             // Check for method start.
-            let line_text: String = File::remove_single_line_comment_from_line(&line);
+            let line_text: String = remove_single_line_comment_from_line(&line);
             let function_start_capt = re_function_start.captures(&line_text);
             match function_start_capt {
                 Some(_) => {
@@ -1431,7 +1236,7 @@ impl Class {
         lines.sort_by_key(|line| line.get_number());
         
         // Get indentation from first line.
-        let indentation: usize = File::get_indentation_length(lines.get(0).unwrap()) - 4;
+        let indentation: usize = get_indentation_length(lines.get(0).unwrap()) - 4;
         let mut indentation_str: String = "".to_string();
         for _ in 0..indentation {
             indentation_str.push_str(" ");
@@ -1513,6 +1318,214 @@ impl PartialEq for Class {
     
 }
 
+fn get_indentation_length(line: &Line) -> usize {
+    // Initialize regex and capture.
+    let re_indentation = Regex::new(PATTERN_INDENTATION).unwrap();
+    let indentation_capt = re_indentation.captures(line.get_text());
+    
+    // Return indentation length.
+    return indentation_capt.unwrap()["indentation"].len();
+}
+
+fn line_is_import(line: &Line, writer: &mut BufWriter<Box<dyn Write>>) -> Option<Vec<String>> {
+    // Initialize regex.
+    let re_import = Regex::new(PATTERN_IMPORT).unwrap();
+    let re_from_import = Regex::new(PATTERN_FROM_IMPORT).unwrap();
+    
+    // Check if the line matches any of the regexes.
+    let line_text: String = remove_single_line_comment_from_line(&line);
+    let import_capt = re_import.captures(&line_text);
+    let from_import_capt = re_from_import.captures(&line_text);
+    
+    match import_capt {
+        Some(c) => {
+            // Collect imports in a vector.
+            let mut modules_vec: Vec<String> = Vec::new();
+            let modules: String = String::from(&c["modules"]);
+            for module in modules.split(",") {
+                // Split by " as ", if the module does not contain it, the split vector will have length 1, else it will have length 2. Regardless we want the last item in the vector.
+                let module_split: Vec<&str> = module.split(" as ").collect();
+                modules_vec.push(module_split.get(module_split.len() - 1).unwrap().trim().to_string());
+            }
+            
+            // Remove imports containing spaces, print warning in case they do.
+            let mut indices_to_remove: Vec<usize> = Vec::new();
+            for (index, module) in modules_vec.iter().enumerate() {
+                if module.contains(char::is_whitespace) {
+                    write_to_writer(writer, format!("WARNING: Line {}: Import cannot contain spaces '{}' (specifically '{}').\n", line.get_number(), line.get_text(), module).as_bytes());
+                    indices_to_remove.push(index);
+                } else if module.trim().is_empty() {
+                    indices_to_remove.push(index);
+                }
+            }
+            for index in indices_to_remove.iter().rev() {
+                modules_vec.remove(*index);
+            }
+            
+            // Return none if no modules are left.
+            match modules_vec.len() {
+                0 => return None, 
+                _ => return Some(modules_vec), 
+            }
+        }, 
+        None => {
+            match from_import_capt {
+                Some(c) => {
+                    // Collect imports in a vector.
+                    let mut objects_vec: Vec<String> = Vec::new();
+                    let objects: String = String::from(&c["objects"]);
+                    for object in objects.split(",") {
+                        // Split by " as " (same as with modules).
+                        let object_split: Vec<&str> = object.split(" as ").collect();
+                        objects_vec.push(object_split.get(object_split.len() - 1).unwrap().trim().to_string());
+                    }
+                    
+                    // Remove imports containing spaces, print warning in case they do.
+                    let mut indices_to_remove: Vec<usize> = Vec::new();
+                    for (index, object) in objects_vec.iter().enumerate() {
+                        if object.contains(char::is_whitespace) {
+                            write_to_writer(writer, format!("WARNING: Line {}: Import cannot contain spaces '{}' (specifically '{}').\n", line.get_number(), line.get_text(), object).as_bytes());
+                            indices_to_remove.push(index);
+                        } else if object.trim().is_empty() {
+                            indices_to_remove.push(index);
+                        }
+                    }
+                    for index in indices_to_remove.iter().rev() {
+                        objects_vec.remove(*index);
+                    }
+                    
+                    // Return none if no objects are left.
+                    match objects_vec.len() {
+                        0 => return None, 
+                        _ => return Some(objects_vec), 
+                    }
+                }, 
+                None => return None
+            }
+        }
+    }
+}
+
+fn line_is_global_var(line: &Line) -> bool {
+    // Initialize and match regex.
+    let re_global_var = Regex::new(PATTERN_GLOBAL_VARIABLE).unwrap();
+    let line_text: String = remove_single_line_comment_from_line(&line);
+    let global_var_capt = re_global_var.captures(&line_text);
+    
+    match global_var_capt {
+        Some(_) => return true, 
+        None => return false
+    }
+}
+
+fn line_is_function_start(line: &Line) -> bool {
+    // Initialize and match regex.
+    let re_function_definition = Regex::new(PATTERN_FUNCTION_START).unwrap();
+    let line_text: String = remove_single_line_comment_from_line(&line);
+    let function_definition_capt = re_function_definition.captures(&line_text);
+    
+    match function_definition_capt {
+        Some(_) => return true, 
+        None => return false
+    }
+}
+
+fn line_is_class_start(line: &Line) -> bool {
+    // Initialize and match regex.
+    let re_class_definition = Regex::new(PATTERN_CLASS_START).unwrap();
+    let line_text: String = remove_single_line_comment_from_line(line);
+    let class_definition_capt = re_class_definition.captures(&line_text);
+    
+    match class_definition_capt {
+        Some(_) => return true, 
+        None => return false
+    }
+}
+
+fn remove_single_line_comment_from_line(line: &Line) -> String {
+    // Detect location of first hashtag not in quotations.
+    let mut in_single_quotations: bool = false;
+    let mut in_double_quotations: bool = false;
+    
+    // Loop over characters in the line.
+    let mut result: String = "".to_string();
+    for (index, c) in line.get_text().chars().enumerate() {
+        match c {
+            '\'' => {
+                if !in_double_quotations {
+                    if index == 0 {
+                        in_single_quotations = !in_single_quotations;
+                    } else if index == 1 {
+                        let prev_char: char = line.get_text().chars().nth(index - 1).unwrap();
+                        if !(prev_char == '\\') {
+                            in_single_quotations = !in_single_quotations;
+                        }
+                    } else {
+                        // Check if the last two characters were also single quotations, indicating the start or end of a multiline comment.
+                        let prev_char: char = line.get_text().chars().nth(index - 1).unwrap();
+                        let prev_prev_char: char = line.get_text().chars().nth(index - 2).unwrap();
+                        if !(prev_char == '\'' && prev_prev_char == '\'') {
+                            if !(prev_char == '\\') {
+                                in_single_quotations = !in_single_quotations;
+                            }
+                        }
+                    }
+                }
+            }, 
+            '\"' => {
+                if !in_single_quotations {
+                    if index == 0 {
+                        in_double_quotations = !in_double_quotations;
+                    } else if index == 1 {
+                        let prev_char: char = line.get_text().chars().nth(index - 1).unwrap();
+                        if !(prev_char == '\\') {
+                            in_double_quotations = !in_double_quotations;
+                        }
+                    } else {
+                        // Check if the last two characters were also double quotations, indicating the start or end of a multiline comment.
+                        let prev_char: char = line.get_text().chars().nth(index - 1).unwrap();
+                        let prev_prev_char: char = line.get_text().chars().nth(index - 2).unwrap();
+                        if !(prev_char == '\"' && prev_prev_char == '\"') {
+                            if !(prev_char == '\\') {
+                                in_double_quotations = !in_double_quotations;
+                            }
+                        }
+                    }
+                }
+            }, 
+            '#' => {
+                if !(in_single_quotations || in_double_quotations) {
+                    return result;
+                }
+            }, 
+            _ => ()
+        }
+        result.push(c);
+    }
+    
+    return result;
+}
+
+fn line_is_multiline_comment_start(line: &Line) -> bool {
+    return line.get_text().trim_start().starts_with("\"\"\"") 
+        || line.get_text().trim_start().starts_with("\'\'\'");
+}
+
+fn line_is_multiline_comment_end(line: &Line) -> bool {
+    // This function is only ever called if a multiline comment start was already detected. This means that, if this is the end of the multiline comment, it either ends with """/''' or ends with """/''' followed by some number of whitespaces and then a comment.
+    // Get line text and line text without optional comment.
+    let text_raw: String = line.get_text().to_string();
+    let text_no_comment: String = remove_single_line_comment_from_line(&line);
+    
+    // Check if the line text ends in quotations or the line text without optional comment ends in quotations.
+    let condition1: bool = text_raw.trim_end().ends_with("\"\"\"") 
+        || text_raw.trim_end().ends_with("\'\'\'");
+    let condition2: bool = text_no_comment.trim_end().ends_with("\"\"\"") 
+        || text_no_comment.trim_end().ends_with("\'\'\'");
+    
+    return condition1 || condition2;
+}
+
 pub fn get_file_lines(filename: &str) -> Result<Vec<String>, std::io::Error> {
     let mut result: Vec<String> = Vec::new();
     let contents = fs::read_to_string(filename)?;
@@ -1523,7 +1536,13 @@ pub fn get_file_lines(filename: &str) -> Result<Vec<String>, std::io::Error> {
 }
 
 pub fn get_lines_for_test(filename: &str) -> Vec<String> {
-    return get_file_lines(filename).unwrap();
+    match get_file_lines(filename) {
+        Ok(lines) => return lines, 
+        Err(e) => {
+            eprintln!("ERROR: Error occured while reading file '{}': '{}'", filename, e);
+            panic!("Fatal error: file cannot be read.");
+        }
+    }
 }
 
 pub fn vec_str_to_vec_line(source: &Vec<String>) -> Vec<Line> {
@@ -3584,7 +3603,22 @@ mod tests {
     }
     
     #[test]
-    fn test_file_functions() {
+    fn test_create_file_empty_name() {
+        // Initialize writer.
+        let stdout_handle = std::io::stdout();
+        let mut writer: BufWriter<Box<dyn Write>> = BufWriter::new(Box::new(stdout_handle));
+        
+        // Test filename empty.
+        let lines: Vec<Line> = vec![
+            Line::new(1, "def func():"), 
+            Line::new(2, "    pass"), 
+        ];
+        let file: File = File::new("", &lines, &mut writer);
+        assert_eq!(file.get_name(), "");
+    }
+    
+    #[test]
+    fn test_line_functions() {
         // Initialize writer.
         let stdout_handle = std::io::stdout();
         let mut writer: BufWriter<Box<dyn Write>> = BufWriter::new(Box::new(stdout_handle));
@@ -3603,6 +3637,8 @@ mod tests {
             Line::new(1, "from banaan import apple # Baz"), 
             Line::new(2, "import math # Some comment"), 
             Line::new(3, "from a import b # Some comment"), 
+            Line::new(4, "import  "), 
+            Line::new(5, "from a import  "), 
         ];
         
         let expected_results: Vec<Option<Vec<String>>> = vec![
@@ -3618,10 +3654,12 @@ mod tests {
             Some(vec!["apple".to_string()]), 
             Some(vec!["math".to_string()]), 
             Some(vec!["b".to_string()]), 
+            None, 
+            None, 
         ];
         
         for (line, result) in std::iter::zip(lines, expected_results) {
-            assert_eq!(File::line_is_import(&line, &mut writer), result);
+            assert_eq!(line_is_import(&line, &mut writer), result);
         }
         
         // Test File::line_is_global_var().
@@ -3669,7 +3707,7 @@ mod tests {
         
         for (line, result) in std::iter::zip(lines, expected_results) {
             println!("Line is global variable: '{}'", line.as_string(0).trim_end_matches("\n"));
-            assert_eq!(File::line_is_global_var(&line), result);
+            assert_eq!(line_is_global_var(&line), result);
         }
         
         // Test File::line_is_function_start().
@@ -3697,7 +3735,7 @@ mod tests {
         
         for (line, result) in std::iter::zip(lines, expected_results) {
             println!("Line is function start: '{}'", line.as_string(0).trim_end_matches("\n"));
-            assert_eq!(File::line_is_function_start(&line), result);
+            assert_eq!(line_is_function_start(&line), result);
         }
         
         // Test File::line_is_class_start().
@@ -3729,7 +3767,7 @@ mod tests {
         
         for (line, result) in std::iter::zip(lines, expected_results) {
             println!("Line is class start: '{}'", line.as_string(0).trim_end_matches("\n"));
-            assert_eq!(File::line_is_class_start(&line), result);
+            assert_eq!(line_is_class_start(&line), result);
         }
         
         // Test File::remove_single_line_comment_from_line().
@@ -3768,7 +3806,7 @@ mod tests {
         ];
         
         for (line, result) in std::iter::zip(lines, expected_results) {
-            assert_eq!(File::remove_single_line_comment_from_line(&line), result.to_string());
+            assert_eq!(remove_single_line_comment_from_line(&line), result.to_string());
         }
         
         // Test File::line_is_multiline_comment_start().
@@ -3812,7 +3850,7 @@ mod tests {
         
         for (line, result) in std::iter::zip(lines, expected_results) {
             println!("Line is multiline comment start: '{}'", line.as_string(0).trim_end_matches("\n"));
-            assert_eq!(File::line_is_multiline_comment_start(&line), result);
+            assert_eq!(line_is_multiline_comment_start(&line), result);
         }
         
         // Test File::line_is_multiline_comment_end().
@@ -3850,7 +3888,7 @@ mod tests {
         
         for (line, result) in std::iter::zip(lines, expected_results) {
             println!("Line is multiline comment end: '{}'", line.as_string(0).trim_end_matches("\n"));
-            assert_eq!(File::line_is_multiline_comment_end(&line), result);
+            assert_eq!(line_is_multiline_comment_end(&line), result);
         }
     }
     
@@ -3899,6 +3937,9 @@ mod tests {
                 assert_eq!(n, last_line.get(index).unwrap());
             }
         }
+        
+        // Flush writer.
+        flush_writer(&mut writer);
     }
     
 }
