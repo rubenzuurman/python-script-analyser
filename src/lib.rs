@@ -3,15 +3,24 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::ffi::OsStr;
 
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+
 use regex::Regex;
 
 static PATTERN_INDENTATION: &str = r"^(?P<indentation>[\t ]*).*$";
 static PATTERN_IMPORT: &str = r"^[\t ]*import[\t ]+(?P<modules>[\w, \t\.]+)$";
 static PATTERN_FROM_IMPORT: &str = r"^[\t ]*from[\t ]+(?P<module>[\w\.]+)[\t ]+import[\t ]+(?P<objects>[\w ,\t]+)$";
-static PATTERN_GLOBAL_VARIABLE: &str = r"^[\t ]*(?P<varname>\w+)[\t ]*(:.*)?[\t ]*=[\t ]*.*$";
 static PATTERN_FUNCTION_START: &str = r"^(?P<indentation>[\t ]*)def[\t ]+(?P<name>\w+)[\t ]*\((?P<params>.*)\)[\t ]*(->[\t ]*[\w, \t\[\]]+[\t ]*)?:[\t ]*$";
 static PATTERN_CLASS_START: &str = r"^(?P<indentation>[\t ]*)class[\t ]+(?P<name>\w+)[\t ]*(\((?P<parent>[\w \t\[\]\.,]*)\))?[\t ]*:[\t ]*$";
 static PATTERN_CLASS_VARIABLE: &str = r"^[\t ]{INDENTATION}(?P<varname>\w+)[\t ]*(:.*)?[\t ]*=[\t ]*(?P<varvalue>.+)[\t ]*$"; // INDENTATION will be replaced with the current class indentation when this pattern is used.
+static PATTERN_WHILE_LOOP: &str = r"^[\t ]*while[\t ]+(?P<condition>.*)[\t ]*:[\t ]*$";
+static PATTERN_FOR_LOOP: &str = r"^[\t ]*for[\t ]+(?P<itervar>[a-zA-Z_]{1}\w*)[\t ]+in[\t ]+(?P<iterator>[a-zA-Z_]{1}.*)[\t ]*:[\t ]*$";
+
+static PATTERN_FUNCTION_CALL_EXPRESSION: &str = r"^(?P<name>[a-zA-Z_]{1}\w*)\((?P<arguments>.*)\)$";
+static PATTERN_ARRAY_DICT_ACCESS_EXPRESSION: &str = r"^(?P<name>[a-zA-Z_]{1}\w*)\[(?P<index>.+)\]$";
+static PATTERN_VARIABLE_NAME_EXPRESSION: &str = r"^[a-zA-Z_]{1}\w*$";
+static PATTERN_WITH_STATEMENT: &str = r"^[\t ]*with[\t ]+(?P<expression>.*)[\t ]+as[\t ]+(?P<alias>[a-zA-Z_]{1}\w+)[\t ]*:[\t ]*$";
 
 #[derive(Clone, Debug)]
 pub struct Line {
@@ -38,18 +47,19 @@ impl Line {
     
     pub fn is_assignment(&self) -> Option<usize> {
         /*
-        A line is an assignment if it contains exactly one equal sign (not preceded by a less than sign, greater than sign, exclamation mark, plus sign, or minus sign) which is not enclosed by any of the following:
+        A line is an assignment if it contains exactly one equal sign (not preceded by a less than sign, greater than sign, or exclamation mark) which is not enclosed by any of the following:
             Single quotations
             Double quotations
             Normal brackets
             Square brackets
             Curly brackets
+        These prefixs for the equal sign are allowed: plus sign, minus sign, slash, asterisk, percent, hat, ampersand, pipe symbol, or tilde.
         */
         let mut in_single_quotations: bool = false;
         let mut in_double_quotations: bool = false;
-        let mut in_brackets_depth: u32 = 0;
-        let mut in_square_brackets_depth: u32 = 0;
-        let mut in_curly_brackets_depth: u32 = 0;
+        let mut in_brackets_depth: i32 = 0;
+        let mut in_square_brackets_depth: i32 = 0;
+        let mut in_curly_brackets_depth: i32 = 0;
         
         let mut first_half: bool = true;
         let mut equals_index: usize = 0;
@@ -80,7 +90,9 @@ impl Line {
                 }, 
                 ')' => {
                     if !(in_single_quotations || in_double_quotations) {
-                        in_brackets_depth -= 1;
+                        if in_brackets_depth > 0 {
+                            in_brackets_depth -= 1;
+                        }
                     }
                 }, 
                 '[' => {
@@ -90,7 +102,9 @@ impl Line {
                 }, 
                 ']' => {
                     if !(in_single_quotations || in_double_quotations) {
-                        in_square_brackets_depth -= 1;
+                        if in_square_brackets_depth > 0 {
+                            in_square_brackets_depth -= 1;
+                        }
                     }
                 }, 
                 '{' => {
@@ -100,7 +114,9 @@ impl Line {
                 }, 
                 '}' => {
                     if !(in_single_quotations || in_double_quotations) {
-                        in_curly_brackets_depth -= 1;
+                        if in_curly_brackets_depth > 0 {
+                            in_curly_brackets_depth -= 1;
+                        }
                     }
                 }, 
                 '=' => {
@@ -111,7 +127,7 @@ impl Line {
                     
                     // Check if the previous character was not '>', '<', '!', '+', or '-'.
                     let prev_char: char = self.get_text().chars().nth(index - 1).unwrap();
-                    if prev_char == '>' || prev_char == '<' || prev_char == '!' || prev_char == '+' || prev_char == '-' {
+                    if prev_char == '>' || prev_char == '<' || prev_char == '!' {
                         continue;
                     }
                     
@@ -125,6 +141,12 @@ impl Line {
                             // Second equals sign, is definitely not an assignment.
                             return None;
                         }
+                    }
+                }, 
+                '#' => {
+                    // Check if not in quotations or brackets.
+                    if !(in_single_quotations || in_double_quotations) {
+                        break;
                     }
                 }, 
                 _ => ()
@@ -210,9 +232,24 @@ impl Assignment {
                         source: line.clone()
                     });
                 } else {
+                    // Check if the variable name ends with + - / * // ** % ^ & |.
+                    let mut var_trim: String = var.trim().to_string();
+                    let mut val_trim: String = val.trim().to_string();
+                    
+                    let suffixes: Vec<&str> = vec!["//", "**", "+", "-", "/", "*", "%", "^", "&", "|"];
+                    
+                    for suffix in suffixes {
+                        if var_trim.ends_with(suffix) {
+                            val_trim = format!("{} ({})", var_trim, val_trim);
+                            for _ in 0..suffix.len() {
+                                var_trim.pop();
+                            }
+                        }
+                    }
+                    
                     return Some(Assignment {
-                        name: var.trim().to_string(), 
-                        value: val.trim().to_string(), 
+                        name: var_trim.trim().to_string(), 
+                        value: val_trim.trim().to_string(), 
                         source: line.clone()
                     });
                 }
@@ -497,7 +534,7 @@ impl File {
             }
             
             // Detect global variables.
-            if line_is_global_var(&line) {
+            if let Some(_) = line.is_assignment() {
                 match Assignment::new(line) {
                     Some(a) => global_vars.push(a), 
                     None => write_to_writer(writer, format!("WARNING: '{}' should have been an assignment, but wasn't. This is not supposed to happen. (File::new())\n", line.as_string(0)).as_bytes()), 
@@ -539,6 +576,73 @@ impl File {
             functions: functions, 
             classes: classes
         };
+    }
+    
+    pub fn scan(&self, writer: &mut BufWriter<Box<dyn Write>>) {
+        // Define function to check if the scope contains a variable name.
+        fn scope_contains(scope: &Vec<(usize, String)>, item: &str) -> bool {
+            for var in scope {
+                if var.1 == item {
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        // Initialize current scope.
+        let mut scope: Vec<(usize, String)> = vec![
+            (0, "False".to_string()), 
+            (0, "True".to_string()), 
+        ];
+        
+        // Get list of imports and add them to current scope.
+        for import in self.get_imports() {
+            scope.push((0, import.clone()));
+        }
+        
+        // Add function names and class names to scope.
+        for function in self.get_functions() {
+            scope.push((0, function.get_name().clone()));
+        }
+        for class in self.get_classes() {
+            scope.push((0, class.get_name().clone()));
+        }
+        
+        // Check global variables and add to current scope.
+        for var in self.get_global_variables() {
+            //write_to_writer(writer, format!("[Line {}] Doing `{}`=`{}`.\n", var.get_source().get_number(), var.get_name(), var.get_value()).as_bytes());
+            
+            // Check if the name contains a dot (meaning a function/class/variable is assigned on the value, meaning the name should not be added to the scope).
+            if !var.get_name().contains(".") {
+                scope.push((get_indentation_length(var.get_source()), var.get_name().clone()));
+            }
+            
+            // The variable name contains a dot (meaning a function/class/variable is called from the value).
+            let temp_result_name: Vec<String> = handle_assignment_expression(var.get_name().clone(), true, false);
+            for variable in temp_result_name {
+                if !scope_contains(&scope, &variable) {
+                    write_to_writer(writer, format!("[Line {}] WARNING: Variable name does not exist or is out of scope '{}'.\n", var.get_source().get_number(), variable).as_bytes());
+                }
+            }
+            
+            // Check the variable value for undefined variables.
+            let temp_result_value: Vec<String> = handle_assignment_expression(var.get_value().clone(), true, false);
+            for variable in temp_result_value {
+                if !scope_contains(&scope, &variable) {
+                    write_to_writer(writer, format!("[Line {}] WARNING: Variable name does not exist or is out of scope '{}'.\n", var.get_source().get_number(), variable).as_bytes());
+                }
+            }
+        }
+        
+        // Scan functions.
+        for function in self.get_functions() {
+            function.scan(writer, &mut scope);
+        }
+        
+        // Scan classes.
+        for class in self.get_classes() {
+            class.scan(writer, &mut scope);
+        }
     }
     
     pub fn get_name(&self) -> &String {
@@ -921,6 +1025,195 @@ impl Function {
         };
     }
     
+    pub fn scan(&self, writer: &mut BufWriter<Box<dyn Write>>, scope: &Vec<(usize, String)>) {
+        // Define function to check if the scope contains a variable name.
+        fn scope_contains(scope: &Vec<(usize, String)>, item: &str) -> bool {
+            for var in scope {
+                if var.1 == item {
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        // Clone scope (everything inside this function is local to this scope).
+        let mut scope: Vec<(usize, String)> = scope.clone();
+        
+        // Get function indentation.
+        let function_indentation: usize = get_indentation_length(self.get_source().get(1).unwrap());
+        
+        // Add function parameters to scope.
+        for parameter in self.get_parameters() {
+            let mut param_split: &str = parameter.split("=").next().unwrap();
+            if param_split.starts_with("**") {
+                param_split = &param_split[2..];
+            } else if param_split.starts_with("*") {
+                param_split = &param_split[1..];
+            }
+            scope.push((function_indentation, param_split.to_string()));
+        }
+        
+        // Initialize regex patterns.
+        let re_for_loop = Regex::new(PATTERN_FOR_LOOP).unwrap();
+        let re_while_loop = Regex::new(PATTERN_WHILE_LOOP).unwrap();
+        let re_with_statement = Regex::new(PATTERN_WITH_STATEMENT).unwrap();
+        
+        // Loop over the source.
+        for (index, line) in self.get_source().iter().enumerate() {
+            // Skip first line (which is the function definition).
+            if index == 0 {
+                continue;
+            }
+            
+            // Remove all variables that are out of scope on the current line.
+            let current_indentation: usize = get_indentation_length(&line);
+            let mut indices_to_remove: Vec<usize> = Vec::new();
+            for (index, (indentation, _)) in scope.iter().enumerate() {
+                if indentation > &current_indentation {
+                    indices_to_remove.push(index);
+                }
+            }
+            for index in indices_to_remove.iter().rev() {
+                scope.remove(*index);
+            }
+            
+            // Check if the line is a return statement.
+            if line.get_text().trim().starts_with("return ") {
+                let result: Vec<String> = handle_assignment_expression(line.get_text().trim()[7..].to_string(), true, false);
+                for variable in result {
+                    if !scope_contains(&scope, &variable) {
+                        write_to_writer(writer, format!("[Line {}] WARNING: Variable name does not exist or is out of scope '{}'.\n", line.get_number(), variable).as_bytes());
+                    }
+                }
+            }
+            
+            // Check if the line is an if statement.
+            if line.get_text().trim().starts_with("if ") {
+                let result: Vec<String> = handle_assignment_expression(line.get_text().trim()[3..].to_string(), true, false);
+                for variable in result {
+                    if !scope_contains(&scope, &variable) {
+                        write_to_writer(writer, format!("[Line {}] WARNING: Variable name does not exist or is out of scope '{}'.\n", line.get_number(), variable).as_bytes());
+                    }
+                }
+            }
+            if line.get_text().trim().starts_with("elif ") {
+                let result: Vec<String> = handle_assignment_expression(line.get_text().trim()[5..].to_string(), true, false);
+                for variable in result {
+                    if !scope_contains(&scope, &variable) {
+                        write_to_writer(writer, format!("[Line {}] WARNING: Variable name does not exist or is out of scope '{}'.\n", line.get_number(), variable).as_bytes());
+                    }
+                }
+            }
+            if line.get_text().trim() == "else:" {}
+            
+            // If the line is a for loop, define the iteration variable using the indentation of the next line, check if the iterator is defined in this scope.
+            let capt_for = re_for_loop.captures(line.get_text());
+            match capt_for {
+                Some(a) => {
+                    // Get itervar from regex.
+                    let itervar: &str = &a["itervar"].trim().to_string();
+                    // Check if this is the last line.
+                    if index == self.get_source().len() - 1 {
+                        write_to_writer(writer, format!("[Line {}] WARNING: For loop on the last line of the function '{}'.\n", line.get_number(), self.get_name()).as_bytes());
+                        continue;
+                    }
+                    // Get indentation of the next line.
+                    let next_line_indentation: usize = get_indentation_length(self.get_source().get(index + 1).unwrap());
+                    // Add itervar to scope with indentation of next line.
+                    scope.push((next_line_indentation, itervar.to_string()));
+                    
+                    // Get iterator from regex.
+                    let iterator: &str = &a["iterator"].trim().to_string();
+                    // Handle iterator expression.
+                    let temp_result: HashMap<String, Vec<String>> = handle_assignment_right_side_single(iterator.to_string());
+                    for entry in temp_result.get("check").unwrap() {
+                        if !scope_contains(&scope, entry) {
+                            write_to_writer(writer, format!("[Line {}] WARNING: Variable name does not exist or is out of scope '{}'.\n", line.get_number(), entry).as_bytes());
+                        }
+                    }
+                }, 
+                None => {
+                    // Check if the expression is a while loop.
+                    let capt_while = re_while_loop.captures(line.get_text());
+                    match capt_while {
+                        Some(b) => {
+                            // Get condition from regex.
+                            let condition: &str = &b["condition"].trim().to_string();
+                            // Check if this is the last line.
+                            if index == self.get_source().len() - 1 {
+                                write_to_writer(writer, format!("[Line {}] WARNING: While loop on the last line of the function '{}'.\n", line.get_number(), self.get_name()).as_bytes());
+                                continue;
+                            }
+                            // Handle condition expression.
+                            let temp_result: HashMap<String, Vec<String>> = handle_assignment_right_side_single(condition.to_string());
+                            for entry in temp_result.get("check").unwrap() {
+                                if !scope_contains(&scope, entry) {
+                                    write_to_writer(writer, format!("[Line {}] WARNING: Variable name does not exist or is out of scope '{}'.\n", line.get_number(), entry).as_bytes());
+                                }
+                            }
+                        }, 
+                        None => {
+                            // Check if the expression is a with statement.
+                            let capt_with = re_with_statement.captures(&line.get_text());
+                            match capt_with {
+                                Some(c) => {
+                                    let next_line_indentation: usize = get_indentation_length(self.get_source().get(index + 1).unwrap());
+                                    
+                                    let expression_result: Vec<String> = handle_assignment_expression(c["expression"].to_string(), true, false);
+                                    for variable in expression_result {
+                                        if !scope_contains(&scope, &variable) {
+                                            write_to_writer(writer, format!("[Line {}] WARNING: Variable name does not exist or is out of scope '{}'.\n", line.get_number(), variable).as_bytes());
+                                        }
+                                    }
+                                    
+                                    let alias: String = c["alias"].to_string();
+                                    scope.push((next_line_indentation, alias));
+                                }, 
+                                None => {
+                                    match Assignment::new(&line) {
+                                        Some(d) => {
+                                            // Get variables from assignment.
+                                            let variables: HashMap<String, Vec<String>> = get_variables_from_assignment(d);
+                                            
+                                            // Check used variables.
+                                            for variable in variables.get("check").unwrap() {
+                                                if !scope_contains(&scope, variable) {
+                                                    write_to_writer(writer, format!("[Line {}] WARNING: Variable name does not exist or is out of scope '{}'.\n", line.get_number(), variable).as_bytes());
+                                                }
+                                            }
+                                            
+                                            // Add new variables to scope.
+                                            for variable in variables.get("new").unwrap() {
+                                                scope.push((current_indentation, variable.clone()));
+                                            }
+                                            
+                                        }, 
+                                        None => {
+                                            // Get variables from non-assignment.
+                                            let variables: HashMap<String, Vec<String>> = handle_assignment_right_side_single(line.get_text().clone());
+                                            
+                                            // Check used variables.
+                                            for variable in variables.get("check").unwrap() {
+                                                if !scope_contains(&scope, variable) {
+                                                    write_to_writer(writer, format!("[Line {}] WARNING: Variable name does not exist or is out of scope '{}'.\n", line.get_number(), variable).as_bytes());
+                                                }
+                                            }
+                                            
+                                            // Add new variables to scope.
+                                            for variable in variables.get("new").unwrap() {
+                                                scope.push((current_indentation, variable.clone()));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
     pub fn get_name(&self) -> &String {
         return &self.name;
     }
@@ -1190,6 +1483,51 @@ impl Class {
         };
     }
     
+    pub fn scan(&self, writer: &mut BufWriter<Box<dyn Write>>, scope: &Vec<(usize, String)>) {
+        // Define function to check if the scope contains a variable name.
+        fn scope_contains(scope: &Vec<(usize, String)>, item: &str) -> bool {
+            for var in scope {
+                if var.1 == item {
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        // Clone scope (everything inside this class is local to this scope).
+        let mut scope: Vec<(usize, String)> = scope.clone();
+        
+        // Add 'self' to scope.
+        scope.push((0, "self".to_string()));
+        
+        // Get class indentation.
+        // TODO: Get class indentation from the first variable or function, depending on which exists.
+        //let class_indentation: usize = get_indentation_length(self.get_variables().get(0).unwrap().get_source());
+        let class_indentation: usize = get_indentation_length(self.get_methods().get(0).unwrap().get_source().get(0).unwrap());
+        
+        // Add class variables to scope.
+        for class_var in self.get_variables() {
+            let variables: HashMap<String, Vec<String>> = get_variables_from_assignment(class_var.clone());
+            
+            // Check used variables.
+            for variable in variables.get("check").unwrap() {
+                if !scope_contains(&scope, variable) {
+                    write_to_writer(writer, format!("[Line {}] WARNING: Variable name does not exist or is out of scope '{}'.\n", class_var.get_source().get_number(), variable).as_bytes());
+                }
+            }
+            
+            // Add new variables to scope.
+            for variable in variables.get("new").unwrap() {
+                let real_variable: &str = &format!("{}.{}", self.get_name(), variable);
+                scope.push((class_indentation, real_variable.to_string()));
+            }
+        }
+        
+        for method in self.get_methods() {
+            method.scan(writer, &mut scope);
+        }
+    }
+    
     pub fn get_name(&self) -> &String {
         return &self.name;
     }
@@ -1324,7 +1662,7 @@ fn get_indentation_length(line: &Line) -> usize {
     let indentation_capt = re_indentation.captures(line.get_text());
     
     // Return indentation length.
-    return indentation_capt.unwrap()["indentation"].len();
+    return indentation_capt.unwrap()["indentation"].to_string().len();
 }
 
 fn line_is_import(line: &Line, writer: &mut BufWriter<Box<dyn Write>>) -> Option<Vec<String>> {
@@ -1403,18 +1741,6 @@ fn line_is_import(line: &Line, writer: &mut BufWriter<Box<dyn Write>>) -> Option
                 None => return None
             }
         }
-    }
-}
-
-fn line_is_global_var(line: &Line) -> bool {
-    // Initialize and match regex.
-    let re_global_var = Regex::new(PATTERN_GLOBAL_VARIABLE).unwrap();
-    let line_text: String = remove_single_line_comment_from_line(&line);
-    let global_var_capt = re_global_var.captures(&line_text);
-    
-    match global_var_capt {
-        Some(_) => return true, 
-        None => return false
     }
 }
 
@@ -1524,6 +1850,1125 @@ fn line_is_multiline_comment_end(line: &Line) -> bool {
         || text_no_comment.trim_end().ends_with("\'\'\'");
     
     return condition1 || condition2;
+}
+
+fn get_variables_from_assignment(assignment: Assignment) -> HashMap<String, Vec<String>> {
+    let left_side: HashMap<String, Vec<String>> = handle_assignment_left_side(assignment.get_name().clone());
+    let right_side: HashMap<String, Vec<String>> = handle_assignment_right_side(assignment.get_value().clone());
+    
+    let mut result: HashMap<String, Vec<String>> = HashMap::new();
+    
+    for (key, value) in left_side {
+        match result.entry(key) {
+            Entry::Vacant(e) => {
+                e.insert(value);
+            }, 
+            Entry::Occupied(mut e) => {
+                for entry in value {
+                    if e.get().contains(&entry) {
+                        continue;
+                    }
+                    e.get_mut().push(entry);
+                }
+            }
+        }
+    }
+    for (key, value) in right_side {
+        match result.entry(key) {
+            Entry::Vacant(e) => {
+                e.insert(value);
+            }, 
+            Entry::Occupied(mut e) => {
+                for entry in value {
+                    if e.get().contains(&entry) {
+                        continue;
+                    }
+                    e.get_mut().push(entry);
+                }
+            }
+        }
+    }
+    
+    // Remove elements from 'new' that are also in 'check'.
+    let mut indices_to_remove_from_new: Vec<usize> = Vec::new();
+    for (index, value) in result.get("new").unwrap().iter().enumerate() {
+        if result.get("check").unwrap().contains(&value) {
+            indices_to_remove_from_new.push(index);
+        }
+    }
+    for index in indices_to_remove_from_new.iter().rev() {
+        result.get_mut("new").unwrap().remove(*index);
+    }
+    
+    return result;
+}
+
+fn handle_assignment_left_side(name: String) -> HashMap<String, Vec<String>> {
+    // Left side cannot contain strings.
+    let mut result: HashMap<String, Vec<String>> = HashMap::new();
+    for element in split_by_char(name, ',') {
+        for (key, value) in handle_assignment_left_side_single(element.trim().to_string()) {
+            match result.entry(key) {
+                Entry::Vacant(e) => {
+                    e.insert(value);
+                }, 
+                Entry::Occupied(mut e) => {
+                    for entry in value {
+                        if !e.get().contains(&entry) {
+                            e.get_mut().push(entry);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    return result;
+}
+
+pub fn handle_assignment_right_side(string: String) -> HashMap<String, Vec<String>> {
+    // Right side can contain strings.
+    let mut result: HashMap<String, Vec<String>> = HashMap::new();
+    for element in split_by_char(string, ',') {
+        for (key, value) in handle_assignment_right_side_single(element.trim().to_string()) {
+            match result.entry(key) {
+                Entry::Vacant(e) => {
+                    e.insert(value);
+                }, 
+                Entry::Occupied(mut e) => {
+                    for entry in value {
+                        if !e.get().contains(&entry) {
+                            e.get_mut().push(entry);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    return result;
+}
+
+pub fn handle_assignment_left_side_single(element: String) -> HashMap<String, Vec<String>> {
+    let mut result: HashMap<String, Vec<String>> = HashMap::new();
+    result.insert("check".to_string(), Vec::new());
+    result.insert("new".to_string(), Vec::new());
+    
+    // Check if element is a variable name.
+    let re_variable_name = Regex::new(PATTERN_VARIABLE_NAME_EXPRESSION).unwrap();
+    let capt = re_variable_name.captures(&element);
+    if let Some(_) = capt {
+        match result.entry("new".to_string()) {
+            Entry::Vacant(e) => {
+                e.insert(vec![element]);
+            }, 
+            Entry::Occupied(mut e) => {
+                e.get_mut().push(element);
+            }
+        }
+        return result;
+    }
+    
+    // Not a variable name, can contain dots or is an array assignment/function call, else it's not valid (I THINK).
+    let split_by_dot = split_by_char(element, '.');
+    for (index, subelement) in split_by_dot.iter().enumerate() {
+        let value: Vec<String> = handle_assignment_expression(subelement.clone(), index == 0, index == split_by_dot.len() - 1 && index != 0);
+        if index != 0 && value.len() == 1 {
+            if value.get(0).unwrap() == subelement {
+                continue;
+            }
+        }
+        for string in value {
+            if !result.get("check").unwrap().contains(&string) {
+                result.entry("check".to_string()).or_insert(Vec::new()).push(string);
+            }
+        }
+    }
+    return result;
+}
+
+fn handle_assignment_right_side_single(element: String) -> HashMap<String, Vec<String>> {
+    let mut result: HashMap<String, Vec<String>> = HashMap::new();
+    result.insert("check".to_string(), Vec::new());
+    result.insert("new".to_string(), Vec::new());
+    
+    // Add variables used to 'check' vector.
+    for variable in handle_assignment_expression(element.trim().to_string(), true, false) {
+        match result.entry("check".to_string()) {
+            Entry::Vacant(e) => {
+                e.insert(vec![variable]);
+            }, 
+            Entry::Occupied(mut e) => {
+                if !e.get().contains(&variable) {
+                    e.get_mut().push(variable);
+                }
+            }
+        }
+    }
+    
+    return result;
+}
+
+pub fn handle_assignment_expression(element: String, add_array_access_name: bool, last_element_in_split_by_dot: bool) -> Vec<String> {
+    // The add_array_access_name flag specifies whether or not to add the name of an array access when encounted. This is used in situations where a dot is present.
+    let mut result: Vec<String> = Vec::new();
+    
+    // Printing this is very handy for debugging.
+    //println!("Handling {}", element);
+    
+    // Check if the string is empty.
+    if element.trim().is_empty() {
+        return result;
+    }
+    
+    // Check if the string is a comment.
+    if element.trim().starts_with("#") {
+        return result;
+    }
+    
+    // Replace all sequences of spaces with a single space.
+    let mut in_single_quotations: bool = false;
+    let mut in_double_quotations: bool = false;
+    let mut space_added: bool = false;
+    
+    let mut string_single_spaces: String = String::from("");
+    for c in element.trim().chars() {
+        match c {
+            '\'' => {
+                if !in_double_quotations {
+                    in_single_quotations = !in_single_quotations;
+                }
+                string_single_spaces.push(c);
+                space_added = false;
+            }, 
+            '\"' => {
+                if !in_single_quotations {
+                    in_double_quotations = !in_double_quotations;
+                }
+                string_single_spaces.push(c);
+                space_added = false;
+            }, 
+            ' ' => {
+                if in_single_quotations || in_double_quotations {
+                    if !space_added {
+                        string_single_spaces.push(c);
+                        space_added = true;
+                    }
+                }
+            }, 
+            _ => {
+                string_single_spaces.push(c);
+                space_added = false;
+            }
+        }
+    }
+    
+    // Remove spaces not in quotations.
+    let mut in_single_quotations: bool = false;
+    let mut in_double_quotations: bool = false;
+    
+    let mut string_no_spaces: String = String::from("");
+    for (index, c) in element.chars().enumerate() {
+        match c {
+            '\'' => {
+                if !in_double_quotations {
+                    in_single_quotations = !in_single_quotations;
+                }
+                string_no_spaces.push(c);
+            }, 
+            '\"' => {
+                if !in_single_quotations {
+                    in_double_quotations = !in_double_quotations;
+                }
+                string_no_spaces.push(c);
+            }, 
+            ' ' => {
+                if !(in_single_quotations || in_double_quotations) {
+                    // Check if the previous and next character are not both \w characters. If they are, do not remove the space.
+                    if index == 0 {
+                        continue;
+                    }
+                    
+                    let prev_char: Option<char> = element.chars().nth(index - 1);
+                    let next_char: Option<char> = element.chars().nth(index + 1);
+                    
+                    match prev_char {
+                        Some(a) => {
+                            match next_char {
+                                Some(b) => {
+                                    let re = Regex::new(r"^\w$").unwrap();
+                                    let a_str = &a.to_string();
+                                    let b_str = &b.to_string();
+                                    let capt_a = re.captures(a_str);
+                                    let capt_b = re.captures(b_str);
+                                    
+                                    match capt_a {
+                                        Some(_) => {
+                                            match capt_b {
+                                                Some(_) => {
+                                                    string_no_spaces.push(c);
+                                                }, 
+                                                None => ()
+                                            }
+                                        }, 
+                                        None => ()
+                                    }
+                                }, 
+                                None => ()
+                            }
+                        }, 
+                        None => ()
+                    }
+                } else {
+                    string_no_spaces.push(c);
+                }
+            }, 
+            _ => {
+                string_no_spaces.push(c);
+            }
+        }
+    }
+    
+    // Check if the expression is enclosed in normal or square brackets.
+    if is_enclosed_in_brackets(string_no_spaces.clone()) {
+        //println!("{} is enclosed in brackets.", string_no_spaces);
+        let mut chars = string_no_spaces.chars();
+        chars.next();
+        chars.next_back();
+        for string in split_by_char(chars.as_str().to_string(), ',') {
+            let temp_result: Vec<String> = handle_assignment_expression(string, true, false);
+            for entry in temp_result {
+                if result.contains(&entry) {
+                    continue;
+                }
+                result.push(entry);
+            }
+            
+        }
+        return result;
+    }
+    
+    // Check if the expression is a string.
+    if is_string_literal(string_no_spaces.clone()) {
+        return result;
+    }
+    
+    // Check if the expression is a function call.
+    if is_function_call(string_no_spaces.clone()) {
+        //println!("{} is a function call.", string_no_spaces);
+        let re_function_call = Regex::new(PATTERN_FUNCTION_CALL_EXPRESSION).unwrap();
+        let capt = re_function_call.captures(&string_no_spaces).unwrap(); // Can unwrap here because the regex is checked by is_function_call().
+        
+        let arguments: String = capt["arguments"].to_string();
+        for argument in split_by_char(arguments, ',') {
+            let argument_result: Vec<String> = handle_assignment_expression(argument, true, false);
+            for entry in argument_result {
+                if result.contains(&entry) {
+                    continue;
+                }
+                result.push(entry);
+            }
+        }
+        return result;
+    }
+    
+    // Check if the expression is a variable name.
+    let re_variable_name = Regex::new(PATTERN_VARIABLE_NAME_EXPRESSION).unwrap();
+    let capt = re_variable_name.captures(&string_no_spaces);
+    if let Some(_) = capt {
+        if add_array_access_name {
+            result.push(string_no_spaces);
+        }
+        return result;
+    }
+    
+    // Check if the expression is an array access.
+    if is_array_access(string_no_spaces.clone()) {
+        //println!("{} is an array access.", string_no_spaces);
+        let re_array_access = Regex::new(PATTERN_ARRAY_DICT_ACCESS_EXPRESSION).unwrap();
+        let capt = re_array_access.captures(&string_no_spaces).unwrap(); // Can unwrap here because the regex is checked by is_array_access().
+        
+        if add_array_access_name {
+            let name: String = capt["name"].to_string();
+            result.push(name);
+        }
+        
+        let index: String = capt["index"].to_string();
+        let temp_result: Vec<String> = handle_assignment_expression(index, true, false);
+        for entry in temp_result {
+            if result.contains(&entry) {
+                continue;
+            }
+            result.push(entry);
+        }
+        
+        return result;
+    }
+    
+    // Check if the expression is accessing a variable of an object (e.g. object.property).
+    let split_by_dot: Vec<String> = split_by_char(string_no_spaces.clone(), '.');
+    let string_contains_arithmetic: bool = contains_arithmetic_symbols_not_enclosed(string_no_spaces.clone());
+    if (split_by_dot.get(0).unwrap() != &string_no_spaces || split_by_dot.len() > 1) && !string_contains_arithmetic {
+        for (index, part) in split_by_dot.iter().enumerate() {
+            let temp_result: Vec<String> = handle_assignment_expression(part.clone(), index == 0, index == split_by_dot.len() - 1 && index != 0);
+            for entry in temp_result {
+                if result.contains(&entry) {
+                    continue;
+                }
+                result.push(entry);
+            }
+        }
+        return result;
+    }
+    
+    // Split string by arithmetic characters, if not in quotations, and not in brackets/square brackets/curly brackets.
+    let mut in_single_quotations: bool = false;
+    let mut in_double_quotations: bool = false;
+    let mut bracket_depth:        i32  = 0;
+    let mut square_bracket_depth: i32  = 0;
+    let mut curly_bracket_depth:  i32  = 0;
+    let mut chars_to_skip: u32         = 0;
+    
+    let mut parts: Vec<String> = Vec::new();
+    let mut current_string: String = String::from("");
+    for (index, c) in string_no_spaces.chars().enumerate() {
+        if chars_to_skip > 0 {
+            chars_to_skip -= 1;
+            continue;
+        }
+        match c {
+            '\'' => {
+                if !in_double_quotations {
+                    in_single_quotations = !in_single_quotations;
+                }
+                current_string.push(c);
+            }, 
+            '\"' => {
+                if !in_single_quotations {
+                    in_double_quotations = !in_double_quotations;
+                }
+                current_string.push(c);
+            }, 
+            '(' => {
+                if !(in_single_quotations || in_double_quotations) {
+                    if square_bracket_depth == 0 && curly_bracket_depth == 0 {
+                        bracket_depth += 1;
+                    }
+                }
+                current_string.push(c);
+            }, 
+            ')' => {
+                if !(in_single_quotations || in_double_quotations) {
+                    if square_bracket_depth == 0 && curly_bracket_depth == 0 {
+                        if bracket_depth > 0 {
+                            bracket_depth -= 1;
+                        }
+                    }
+                }
+                current_string.push(c);
+            }, 
+            '[' => {
+                if !(in_single_quotations || in_double_quotations) {
+                    if bracket_depth == 0 && curly_bracket_depth == 0 {
+                        square_bracket_depth += 1;
+                    }
+                }
+                current_string.push(c);
+            }, 
+            ']' => {
+                if !(in_single_quotations || in_double_quotations) {
+                    if bracket_depth == 0 && curly_bracket_depth == 0 {
+                        if square_bracket_depth > 0 {
+                            square_bracket_depth -= 1;
+                        }
+                    }
+                }
+                current_string.push(c);
+            }, 
+            '{' => {
+                if !(in_single_quotations || in_double_quotations) {
+                    if bracket_depth == 0 && square_bracket_depth == 0 {
+                        curly_bracket_depth += 1;
+                    }
+                }
+                current_string.push(c);
+            }, 
+            '}' => {
+                if !(in_single_quotations || in_double_quotations) {
+                    if bracket_depth == 0 && square_bracket_depth == 0 {
+                        if curly_bracket_depth > 0 {
+                            curly_bracket_depth -= 1;
+                        }
+                    }
+                }
+                current_string.push(c);
+            }, 
+            '+'|'-'|'%'|'^'|'&'|'|' => {
+                if !(in_single_quotations || in_double_quotations || bracket_depth > 0 || square_bracket_depth > 0 || curly_bracket_depth > 0) {
+                    if !parts.contains(&current_string) {
+                        parts.push(current_string);
+                    }
+                    current_string = "".to_string();
+                } else {
+                    current_string.push(c);
+                }
+            }, 
+            '*'|'/' => {
+                // Check if next character is * or /.
+                if !(in_single_quotations || in_double_quotations || bracket_depth > 0 || square_bracket_depth > 0 || curly_bracket_depth > 0) {
+                    if index < string_no_spaces.len() - 1 {
+                        let next_char: char = string_no_spaces.chars().nth(index + 1).unwrap();
+                        if next_char == '*' || next_char == '/' {
+                            chars_to_skip += 1;
+                        }
+                        if !parts.contains(&current_string) {
+                            parts.push(current_string);
+                        }
+                        current_string = "".to_string();
+                    }
+                    if !parts.contains(&current_string) {
+                        parts.push(current_string);
+                    }
+                    current_string = "".to_string();
+                } else {
+                    current_string.push(c);
+                }
+            }, 
+            '<'|'>'|'!'|'=' => {
+                // Check if the next character is '='.
+                if !(in_single_quotations || in_double_quotations || bracket_depth > 0 || square_bracket_depth > 0 || curly_bracket_depth > 0) {
+                    if !parts.contains(&current_string) {
+                        parts.push(current_string);
+                    }
+                    current_string = "".to_string();
+                    
+                    let next_char: Option<char> = string_no_spaces.chars().nth(index + 1);
+                    match next_char {
+                        Some(a) => {
+                            if a == '=' {
+                                chars_to_skip += 1;
+                            }
+                        }, 
+                        None => ()
+                    }
+                } else {
+                    current_string.push(c);
+                }
+            }, 
+            'a' => {
+                // Check if the next characters are 'nd' and the 'and' is surrounded by non-word characters.
+                if !(in_single_quotations || in_double_quotations || bracket_depth > 0 || square_bracket_depth > 0 || curly_bracket_depth > 0) {
+                    let mut prev_char: Option<char> = Some('?');
+                    if index > 0 {
+                        prev_char = string_no_spaces.chars().nth(index - 1);
+                    }
+                    let next_char: Option<char> = string_no_spaces.chars().nth(index + 1);
+                    let next_next_char: Option<char> = string_no_spaces.chars().nth(index + 2);
+                    let next_next_next_char: Option<char> = string_no_spaces.chars().nth(index + 3);
+                    let re_not_word_char = Regex::new(r"^\W$").unwrap();
+                    match prev_char {
+                        Some(pc) => {
+                            let pc_string: String = pc.to_string();
+                            let pc_not_word_char = re_not_word_char.captures(&pc_string);
+                            match next_char {
+                                Some(nc) => {
+                                    match next_next_char {
+                                        Some(nnc) => {
+                                            if nc == 'n' && nnc == 'd' {
+                                                match next_next_next_char {
+                                                    Some(nnnc) => {
+                                                        let nnnc_string: String = nnnc.to_string();
+                                                        let nnnc_not_word_char = re_not_word_char.captures(&nnnc_string);
+                                                        if let Some(_) = pc_not_word_char {
+                                                            if let Some(_) = nnnc_not_word_char {
+                                                                if !parts.contains(&current_string) {
+                                                                    parts.push(current_string);
+                                                                }
+                                                                current_string = "".to_string();
+                                                                chars_to_skip += 2;
+                                                            } else {
+                                                                current_string.push(c);
+                                                            }
+                                                        } else {
+                                                            current_string.push(c);
+                                                        }
+                                                    }, 
+                                                    None => {
+                                                        current_string.push(c);
+                                                    }
+                                                }
+                                            } else {
+                                                current_string.push(c);
+                                            }
+                                        }, 
+                                        None => {
+                                            current_string.push(c);
+                                        }
+                                    }
+                                }, 
+                                None => {
+                                    current_string.push(c);
+                                }
+                            }
+                        }, 
+                        None => {
+                            current_string.push(c);
+                        }
+                    }
+                } else {
+                    current_string.push(c);
+                }
+            }, 
+            'o' => {
+                // Check if the next character is 'r' and the 'or' is surrounded by non-word characters.
+                if !(in_single_quotations || in_double_quotations || bracket_depth > 0 || square_bracket_depth > 0 || curly_bracket_depth > 0) {
+                    let mut prev_char: Option<char> = Some('?');
+                    if index > 0 {
+                        prev_char = string_no_spaces.chars().nth(index - 1);
+                    }
+                    let next_char: Option<char> = string_no_spaces.chars().nth(index + 1);
+                    let next_next_char: Option<char> = string_no_spaces.chars().nth(index + 2);
+                    let re_not_word_char = Regex::new(r"^\W$").unwrap();
+                    match prev_char {
+                        Some(pc) => {
+                            let pc_string: String = pc.to_string();
+                            let pc_not_word_char = re_not_word_char.captures(&pc_string);
+                            match next_char {
+                                Some(nc) => {
+                                    if nc == 'r' {
+                                        match next_next_char {
+                                            Some(nnc) => {
+                                                let nnc_string: String = nnc.to_string();
+                                                let nnc_not_word_char = re_not_word_char.captures(&nnc_string);
+                                                if let Some(_) = pc_not_word_char {
+                                                    if let Some(_) = nnc_not_word_char {
+                                                        if !parts.contains(&current_string) {
+                                                            parts.push(current_string);
+                                                        }
+                                                        current_string = "".to_string();
+                                                        chars_to_skip += 1;
+                                                    } else {
+                                                        current_string.push(c);
+                                                    }
+                                                } else {
+                                                    current_string.push(c);
+                                                }
+                                            }, 
+                                            None => {
+                                                current_string.push(c);
+                                            }
+                                        }
+                                    } else {
+                                        current_string.push(c);
+                                    }
+                                }, 
+                                None => {
+                                    current_string.push(c);
+                                }
+                            }
+                        }, 
+                        None => {
+                            current_string.push(c);
+                        }
+                    }
+                } else {
+                    current_string.push(c);
+                }
+            }, 
+            _ => {
+                current_string.push(c);
+            }
+        }
+    }
+    if parts.len() > 0 {
+        if !parts.contains(&current_string) {
+            parts.push(current_string);
+        }
+    }
+    
+    // Handle every part as a separate expression.
+    for (index, part) in parts.iter().enumerate() {
+        if part == "" {
+            continue;
+        }
+        
+        if result.contains(&part) {
+            continue;
+        }
+        
+        if last_element_in_split_by_dot {
+            // TODO: Investigate if 'index == 0' is needed.
+            if index == 0 {
+                continue;
+            }
+        }
+        
+        let mut part_result: Vec<String> = handle_assignment_expression(part.clone(), true, false);
+        let mut indices_to_remove: Vec<usize> = Vec::new();
+        for (index, entry) in part_result.iter().enumerate() {
+            if result.contains(entry) {
+                indices_to_remove.push(index);
+            }
+        }
+        for index in indices_to_remove.iter().rev() {
+            part_result.remove(*index);
+        }
+        result.append(&mut part_result);
+    }
+    
+    return result;
+}
+
+fn is_enclosed_in_brackets(string: String) -> bool {
+    if string.starts_with("(") && string.ends_with(")") {
+        let mut bracket_level: i32 = 0;
+        let mut in_single_quotations: bool = false;
+        let mut in_double_quotations: bool = false;
+        for (index, c) in string.chars().enumerate() {
+            match c {
+                '\'' => {
+                    if !in_double_quotations {
+                        in_single_quotations = !in_single_quotations;
+                    }
+                }, 
+                '\"' => {
+                    if !in_single_quotations {
+                        in_double_quotations = !in_double_quotations;
+                    }
+                }, 
+                '(' => {
+                    if !(in_single_quotations || in_double_quotations) {
+                        bracket_level += 1;
+                        if index != 0 && bracket_level == 1 {
+                            return false;
+                        }
+                    }
+                }, 
+                ')' => {
+                    if !(in_single_quotations || in_double_quotations) {
+                        bracket_level -= 1;
+                    }
+                }, 
+                _ => ()
+            }
+        }
+        return bracket_level == 0;
+    } else if string.starts_with("[") && string.ends_with("]") {
+        let mut bracket_level: i32 = 0;
+        let mut in_single_quotations: bool = false;
+        let mut in_double_quotations: bool = false;
+        for (index, c) in string.chars().enumerate() {
+            match c {
+                '\'' => {
+                    if !in_double_quotations {
+                        in_single_quotations = !in_single_quotations;
+                    }
+                }, 
+                '\"' => {
+                    if !in_single_quotations {
+                        in_double_quotations = !in_double_quotations;
+                    }
+                }, 
+                '[' => {
+                    if !(in_single_quotations || in_double_quotations) {
+                        bracket_level += 1;
+                        if index != 0 && bracket_level == 1 {
+                            return false;
+                        }
+                    }
+                }, 
+                ']' => {
+                    if !(in_single_quotations || in_double_quotations) {
+                        bracket_level -= 1;
+                    }
+                }, 
+                _ => ()
+            }
+        }
+        return bracket_level == 0;
+    }
+    return false;
+}
+
+fn is_string_literal(string: String) -> bool {
+    if !(string.starts_with("\"") || string.starts_with("\'")) {
+        return false;
+    }
+    if !(string.ends_with("\"") || string.ends_with("\'")) {
+        return false;
+    }
+    
+    let mut in_single_quotations: bool = false;
+    let mut in_double_quotations: bool = false;
+    let mut in_multiline_single_quotations: bool = false;
+    let mut in_multiline_double_quotations: bool = false;
+    
+    let mut in_single_quotations_true_count: i32 = 0;
+    let mut in_double_quotations_true_count: i32 = 0;
+    let mut in_multiline_single_quotations_true_count: i32 = 0;
+    let mut in_multiline_double_quotations_true_count: i32 = 0;
+    
+    for (index, c) in string.chars().enumerate() {
+        match c {
+            '\'' => {
+                if !(in_double_quotations || in_multiline_double_quotations) {
+                    if index >= 2 {
+                        let prev_char = string.chars().nth(index - 1).unwrap();
+                        let prev_prev_char = string.chars().nth(index - 2).unwrap();
+                        if prev_char == '\'' && prev_prev_char == '\'' {
+                            in_multiline_single_quotations = !in_multiline_single_quotations;
+                            if in_multiline_single_quotations {
+                                in_multiline_single_quotations_true_count += 1;
+                            }
+                            in_single_quotations_true_count -= 1;
+                        } else if prev_char != '\\' {
+                            in_single_quotations = !in_single_quotations;
+                            if in_single_quotations {
+                                in_single_quotations_true_count += 1;
+                            }
+                        }
+                    } else {
+                        in_single_quotations = !in_single_quotations;
+                        if in_single_quotations {
+                            in_single_quotations_true_count += 1;
+                        }
+                    }
+                }
+            }, 
+            '\"' => {
+                if !(in_single_quotations || in_multiline_single_quotations) {
+                    if index >= 2 {
+                        let prev_char = string.chars().nth(index - 1).unwrap();
+                        let prev_prev_char = string.chars().nth(index - 2).unwrap();
+                        if prev_char == '\"' && prev_prev_char == '\"' {
+                            in_multiline_double_quotations = !in_multiline_double_quotations;
+                            if in_multiline_double_quotations {
+                                in_multiline_double_quotations_true_count += 1;
+                            }
+                            in_double_quotations_true_count -= 1;
+                        } else if prev_char != '\\' {
+                            in_double_quotations = !in_double_quotations;
+                            if in_double_quotations {
+                                in_double_quotations_true_count += 1;
+                            }
+                        }
+                    } else {
+                        in_double_quotations = !in_double_quotations;
+                        if in_double_quotations {
+                            in_double_quotations_true_count += 1;
+                        }
+                    }
+                }
+            }, 
+            _ => ()
+        }
+    }
+    
+    return (in_single_quotations_true_count == 1 && !in_single_quotations) 
+        || (in_double_quotations_true_count == 1 && !in_double_quotations) 
+        || (in_multiline_single_quotations_true_count == 1 && !in_multiline_single_quotations) 
+        || (in_multiline_double_quotations_true_count == 1 && !in_multiline_double_quotations);
+}
+
+fn is_function_call(string: String) -> bool {
+    // Check if the string matches the regular expression for a function call.
+    let re_function_call = Regex::new(PATTERN_FUNCTION_CALL_EXPRESSION).unwrap();
+    let capt = re_function_call.captures(&string);
+    match capt {
+        None => return false, 
+        Some(_) => (), 
+    }
+    
+    // Check if the parentheses are not closed (not in quotations) before the final character.
+    let mut in_single_quotations: bool = false;
+    let mut in_double_quotations: bool = false;
+    let mut in_brackets_depth: i32 = 0;
+    
+    for (index, c) in string.trim().chars().enumerate() {
+        match c {
+            '\'' => {
+                let mut preceded_by_backslash: bool = false;
+                if index > 0 {
+                    let prev_char: char = string.chars().nth(index - 1).unwrap();
+                    preceded_by_backslash = prev_char == '\\';
+                }
+                if !in_double_quotations && !preceded_by_backslash {
+                    in_single_quotations = !in_single_quotations;
+                }
+            }, 
+            '\"' => {
+                let mut preceded_by_backslash: bool = false;
+                if index > 0 {
+                    let prev_char: char = string.chars().nth(index - 1).unwrap();
+                    preceded_by_backslash = prev_char == '\\';
+                }
+                if !in_single_quotations && !preceded_by_backslash {
+                    in_double_quotations = !in_double_quotations;
+                }
+            }, 
+            '(' => {
+                if !(in_single_quotations || in_double_quotations) {
+                    in_brackets_depth += 1;
+                }
+            }, 
+            ')' => {
+                if !(in_single_quotations || in_double_quotations) {
+                    in_brackets_depth -= 1;
+                    if in_brackets_depth == 0 {
+                        if index != string.len() - 1 {
+                            return false;
+                        }
+                    }
+                }
+            }, 
+            _ => ()
+        }
+    }
+    return true;
+}
+
+fn is_array_access(string: String) -> bool {
+    // Check if the string matches the regular expression for an array access.
+    let re_array_access = Regex::new(PATTERN_ARRAY_DICT_ACCESS_EXPRESSION).unwrap();
+    let capt = re_array_access.captures(&string);
+    match capt {
+        None => return false, 
+        Some(_) => (), 
+    }
+    
+    // Check if the square brackets are not closed (not in quotations) before the final character.
+    let mut in_single_quotations: bool = false;
+    let mut in_double_quotations: bool = false;
+    let mut in_brackets_depth: i32 = 0;
+    
+    for (index, c) in string.trim().chars().enumerate() {
+        match c {
+            '\'' => {
+                let mut preceded_by_backslash: bool = false;
+                if index > 0 {
+                    let prev_char: char = string.chars().nth(index - 1).unwrap();
+                    preceded_by_backslash = prev_char == '\\';
+                }
+                if !in_double_quotations && !preceded_by_backslash {
+                    in_single_quotations = !in_single_quotations;
+                }
+            }, 
+            '\"' => {
+                let mut preceded_by_backslash: bool = false;
+                if index > 0 {
+                    let prev_char: char = string.chars().nth(index - 1).unwrap();
+                    preceded_by_backslash = prev_char == '\\';
+                }
+                if !in_single_quotations && !preceded_by_backslash {
+                    in_double_quotations = !in_double_quotations;
+                }
+            }, 
+            '[' => {
+                if !(in_single_quotations || in_double_quotations) {
+                    in_brackets_depth += 1;
+                }
+            }, 
+            ']' => {
+                if !(in_single_quotations || in_double_quotations) {
+                    in_brackets_depth -= 1;
+                    if in_brackets_depth == 0 {
+                        if index != string.len() - 1 {
+                            return false;
+                        }
+                    }
+                }
+            }, 
+            _ => ()
+        }
+    }
+    return true;
+}
+
+fn contains_arithmetic_symbols_not_enclosed(string: String) -> bool {
+    let mut in_single_quotations: bool = false;
+    let mut in_double_quotations: bool = false;
+    let mut bracket_depth:        i32  = 0;
+    let mut square_bracket_depth: i32  = 0;
+    let mut curly_bracket_depth:  i32  = 0;
+    let mut skip_next_char: bool       = false;
+    
+    for c in string.chars() {
+        if skip_next_char {
+            skip_next_char = false;
+            continue;
+        }
+        match c {
+            '\'' => {
+                if !in_double_quotations {
+                    in_single_quotations = !in_single_quotations;
+                }
+            }, 
+            '\"' => {
+                if !in_single_quotations {
+                    in_double_quotations = !in_double_quotations;
+                }
+            }, 
+            '(' => {
+                if !(in_single_quotations || in_double_quotations) {
+                    if square_bracket_depth == 0 && curly_bracket_depth == 0 {
+                        bracket_depth += 1;
+                    }
+                }
+            }, 
+            ')' => {
+                if !(in_single_quotations || in_double_quotations) {
+                    if square_bracket_depth == 0 && curly_bracket_depth == 0 {
+                        bracket_depth -= 1;
+                    }
+                }
+            }, 
+            '[' => {
+                if !(in_single_quotations || in_double_quotations) {
+                    if bracket_depth == 0 && curly_bracket_depth == 0 {
+                        square_bracket_depth += 1;
+                    }
+                }
+            }, 
+            ']' => {
+                if !(in_single_quotations || in_double_quotations) {
+                    if bracket_depth == 0 && curly_bracket_depth == 0 {
+                        square_bracket_depth -= 1;
+                    }
+                }
+            }, 
+            '{' => {
+                if !(in_single_quotations || in_double_quotations) {
+                    if bracket_depth == 0 && square_bracket_depth == 0 {
+                        curly_bracket_depth += 1;
+                    }
+                }
+            }, 
+            '}' => {
+                if !(in_single_quotations || in_double_quotations) {
+                    if bracket_depth == 0 && square_bracket_depth == 0 {
+                        curly_bracket_depth -= 1;
+                    }
+                }
+            }, 
+            '+'|'-'|'%'|'^'|'&'|'|'|'<'|'>'|'!'|'*'|'/'|'=' => {
+                if !(in_single_quotations || in_double_quotations || bracket_depth > 0 || square_bracket_depth > 0 || curly_bracket_depth > 0) {
+                    return true;
+                }
+            }, 
+            _ => ()
+        }
+    }
+    return false;
+}
+
+fn split_by_char(string: String, delimiter: char) -> Vec<String> {
+    let mut parts: Vec<String> = Vec::new();
+    
+    let mut in_single_quotations: bool = false;
+    let mut in_double_quotations: bool = false;
+    let mut in_brackets_depth:        i32 = 0;
+    let mut in_square_brackets_depth: i32 = 0;
+    let mut in_curly_brackets_depth:  i32 = 0;
+    let mut current_string: String = "".to_string();
+    
+    for (index, c) in string.chars().enumerate() {
+        match c {
+            '\'' => {
+                let mut preceded_by_backslash: bool = false;
+                if index > 0 {
+                    let prev_char: char = string.chars().nth(index - 1).unwrap();
+                    preceded_by_backslash = prev_char == '\\';
+                }
+                if !in_double_quotations && !preceded_by_backslash {
+                    in_single_quotations = !in_single_quotations;
+                }
+                current_string.push(c);
+            }, 
+            '\"' => {
+                let mut preceded_by_backslash: bool = false;
+                if index > 0 {
+                    let prev_char: char = string.chars().nth(index - 1).unwrap();
+                    preceded_by_backslash = prev_char == '\\';
+                }
+                if !in_single_quotations && !preceded_by_backslash {
+                    in_double_quotations = !in_double_quotations;
+                }
+                current_string.push(c);
+            }, 
+            '(' => {
+                if !(in_single_quotations || in_double_quotations || in_square_brackets_depth > 0 || in_curly_brackets_depth > 0) {
+                    in_brackets_depth += 1;
+                }
+                current_string.push(c);
+            }, 
+            ')' => {
+                if !(in_single_quotations || in_double_quotations || in_square_brackets_depth > 0 || in_curly_brackets_depth > 0) {
+                    if in_brackets_depth > 0 {
+                        in_brackets_depth -= 1;
+                    }
+                }
+                current_string.push(c);
+            }, 
+            '[' => {
+                if !(in_single_quotations || in_double_quotations || in_brackets_depth > 0 || in_curly_brackets_depth > 0) {
+                    in_square_brackets_depth += 1;
+                }
+                current_string.push(c);
+            }, 
+            ']' => {
+                if !(in_single_quotations || in_double_quotations || in_brackets_depth > 0 || in_curly_brackets_depth > 0) {
+                    if in_square_brackets_depth > 0 {
+                        in_square_brackets_depth -= 1;
+                    }
+                }
+                current_string.push(c);
+            }, 
+            '{' => {
+                if !(in_single_quotations || in_double_quotations || in_square_brackets_depth > 0 || in_curly_brackets_depth > 0) {
+                    in_curly_brackets_depth += 1;
+                }
+                current_string.push(c);
+            }, 
+            '}' => {
+                if !(in_single_quotations || in_double_quotations || in_square_brackets_depth > 0 || in_curly_brackets_depth > 0) {
+                    if in_curly_brackets_depth > 0 {
+                        in_curly_brackets_depth -= 1;
+                    }
+                }
+                current_string.push(c);
+            }, 
+            ',' => {
+                if delimiter == ',' {
+                    if !(in_single_quotations || in_double_quotations || in_brackets_depth > 0 || in_square_brackets_depth > 0 || in_curly_brackets_depth > 0) {
+                        parts.push(current_string.trim().to_string());
+                        current_string = "".to_string();
+                    } else {
+                        current_string.push(c);
+                    }
+                } else {
+                    current_string.push(c);
+                }
+            }, 
+            '.' => {
+                if delimiter == '.' {
+                    if !(in_single_quotations || in_double_quotations || in_brackets_depth > 0 || in_square_brackets_depth > 0 || in_curly_brackets_depth > 0) {
+                        parts.push(current_string.trim().to_string());
+                        current_string = "".to_string();
+                    } else {
+                        current_string.push(c);
+                    }
+                } else {
+                    current_string.push(c);
+                }
+            }, 
+            _ => {
+                current_string.push(c);
+            }
+        }
+    }
+    parts.push(current_string.trim().to_string());
+    
+    return parts;
 }
 
 pub fn get_file_lines(filename: &str) -> Result<Vec<String>, std::io::Error> {
@@ -1923,67 +3368,6 @@ mod tests {
     }
     
     #[test]
-    fn test_regex_pattern_global_variable() {
-        // Test PATTERN_GLOBAL_VARIABLE.
-        // Construct hashmap containing strings to match.
-        let mut test_strings: HashMap<u32, (bool, &str)> = HashMap::new();
-        test_strings.insert(0, (true, "_flagnames    =    ['C_CONTIGUOUS', 'F_CONTIGUOUS'    , 'ALIGNED'   ,   'WRITEABLE', 'OWNDATA', 'WRITEBACKIFCOPY']"));
-        test_strings.insert(1, (true, "_pointer_type_cache = {}"));
-        test_strings.insert(2, (true, "    __NUMPY_SETUP__ = False"));
-        test_strings.insert(3, (true, "    __all__ = ['exceptions', 'ModuleDeprecationWarning', 'VisibleDeprecationWarning', 'ComplexWarning', 'TooHardError', 'AxisError']"));
-        test_strings.insert(4, (true, "GLOB1 = 1"));
-        test_strings.insert(5, (true, "    GLOB_PARAMETER = 100 ** 2"));
-        test_strings.insert(6, (true, "GLOB_NAME = \"Bananas are pretty good\""));
-        test_strings.insert(7, (true, "GLOB_OBJ: int = time.time()"));
-        test_strings.insert(8, (true, "       GLOBAL_MAP: List[Tuple[np.uint16, List[str, int]], str]     \t\t\t    =     []   \t\t\t \t   \t"));
-        test_strings.insert(9, (false, "  global\"5=5\"[6=6](3=\"5=6\"){g: \"4=3\"}"));
-        test_strings.insert(10, (false, "import banaan"));
-        test_strings.insert(11, (false, "from x import y"));
-        test_strings.insert(12, (false, "class X():"));
-        test_strings.insert(13, (false, "def func(a=5, b=5, c=\"16.5\", d=\'Hello world!\'):"));
-        
-        // Construct hashmap containing hashmaps containing values of named groups.
-        let mut test_matches: HashMap<u32, HashMap<&str, &str>> = HashMap::new();
-        test_matches.insert(0, HashMap::from([("varname", "_flagnames")]));
-        test_matches.insert(1, HashMap::from([("varname", "_pointer_type_cache")]));
-        test_matches.insert(2, HashMap::from([("varname", "__NUMPY_SETUP__")]));
-        test_matches.insert(3, HashMap::from([("varname", "__all__")]));
-        test_matches.insert(4, HashMap::from([("varname", "GLOB1")]));
-        test_matches.insert(5, HashMap::from([("varname", "GLOB_PARAMETER")]));
-        test_matches.insert(6, HashMap::from([("varname", "GLOB_NAME")]));
-        test_matches.insert(7, HashMap::from([("varname", "GLOB_OBJ")]));
-        test_matches.insert(8, HashMap::from([("varname", "GLOBAL_MAP")]));
-        test_matches.insert(9, HashMap::from([("varname", "")]));
-        test_matches.insert(10, HashMap::from([("varname", "")]));
-        test_matches.insert(11, HashMap::from([("varname", "")]));
-        test_matches.insert(12, HashMap::from([("varname", "")]));
-        test_matches.insert(13, HashMap::from([("varname", "")]));
-        
-        // Run tests.
-        let re = Regex::new(PATTERN_GLOBAL_VARIABLE).unwrap();
-        for (key_str, (should_match, value_str)) in test_strings.iter() {
-            let capt = re.captures(value_str);
-            let map = test_matches.get(&key_str).unwrap();
-            match capt {
-                Some(a) => {
-                    if *should_match {
-                        for (key, value) in map.iter() {
-                            assert_eq!(&&a[*key], value);
-                        }
-                    } else {
-                        panic!("ERROR: String '{}' should not have matched 'PATTERN_GLOBAL_VARIABLE', but did.", value_str);
-                    }
-                }, 
-                None => {
-                    if *should_match {
-                        panic!("ERROR: String '{}' should have matched 'PATTERN_GLOBAL_VARIABLE', but didn't.", value_str);
-                    }
-                }
-            }
-        }
-    }
-    
-    #[test]
     fn test_regex_pattern_function_start() {
         // Test PATTERN_FUNCTION_START.
         // Construct hashmap containing strings to match.
@@ -2185,6 +3569,322 @@ mod tests {
                 None => {
                     if *should_match {
                         panic!("ERROR: String '{}' should have matched 'PATTERN_CLASS_VARIABLE', but didn't.", value_str);
+                    }
+                }
+            }
+        }
+    }
+    
+    #[test]
+    fn test_regex_pattern_for_loop() {
+        // Test PATTERN_FOR_LOOP.
+        // Construct hashmap containing strings to match.
+        let mut test_strings: HashMap<u32, (bool, &str)> = HashMap::new();
+        test_strings.insert(0, (true, "for a in b:"));
+        test_strings.insert(1, (true, "    for    a    in     b  :   "));
+        test_strings.insert(2, (true, "  for   __A2C     in B__5G : "));
+        test_strings.insert(3, (false, "  while a > 5 : "));
+        test_strings.insert(4, (false, "if a == 5:"));
+        test_strings.insert(5, (false, "elif a == 5:"));
+        test_strings.insert(6, (false, "else:"));
+        test_strings.insert(7, (false, " gg enijneighe hguiehgiu h uihg eiurhgiuheiughiu  "));
+        test_strings.insert(8, (false, "  def func(a=5, b=6):   "));
+        test_strings.insert(9, (false, "    class   Rect(Shape):   "));
+        test_strings.insert(10, (false, "import os"));
+        test_strings.insert(11, (false, "from os import listdir"));
+        test_strings.insert(12, (true, "for grhgyerFESFShuyg in hgerhguGSSFEeg__545: "));
+        test_strings.insert(13, (true, "for a in b.get_c(d, e.x, \"Some string\").f[g].h:"));
+        
+        // Construct hashmap containing hashmaps containing values of named groups.
+        let mut test_matches: HashMap<u32, HashMap<&str, &str>> = HashMap::new();
+        test_matches.insert(0, HashMap::from([("itervar", "a"), ("iterator", "b")]));
+        test_matches.insert(1, HashMap::from([("itervar", "a"), ("iterator", "b")]));
+        test_matches.insert(2, HashMap::from([("itervar", "__A2C"), ("iterator", "B__5G")]));
+        test_matches.insert(3, HashMap::from([("itervar", ""), ("iterator", "")]));
+        test_matches.insert(4, HashMap::from([("itervar", ""), ("iterator", "")]));
+        test_matches.insert(5, HashMap::from([("itervar", ""), ("iterator", "")]));
+        test_matches.insert(6, HashMap::from([("itervar", ""), ("iterator", "")]));
+        test_matches.insert(7, HashMap::from([("itervar", ""), ("iterator", "")]));
+        test_matches.insert(8, HashMap::from([("itervar", ""), ("iterator", "")]));
+        test_matches.insert(9, HashMap::from([("itervar", ""), ("iterator", "")]));
+        test_matches.insert(10, HashMap::from([("itervar", ""), ("iterator", "")]));
+        test_matches.insert(11, HashMap::from([("itervar", ""), ("iterator", "")]));
+        test_matches.insert(12, HashMap::from([("itervar", "grhgyerFESFShuyg"), ("iterator", "hgerhguGSSFEeg__545")]));
+        test_matches.insert(13, HashMap::from([("itervar", "a"), ("iterator", "b.get_c(d, e.x, \"Some string\").f[g].h")]));
+        
+        // Run tests.
+        let re = Regex::new(PATTERN_FOR_LOOP).unwrap();
+        for (key_str, (should_match, value_str)) in test_strings.iter() {
+            let capt = re.captures(value_str);
+            let map = test_matches.get(&key_str).unwrap();
+            match capt {
+                Some(a) => {
+                    if *should_match {
+                        for (key, value) in map.iter() {
+                            assert_eq!(&&a[*key].trim().to_string(), value);
+                        }
+                    } else {
+                        panic!("ERROR: String '{}' should not have matched 'PATTERN_FOR_LOOP', but did.", value_str);
+                    }
+                }, 
+                None => {
+                    if *should_match {
+                        panic!("ERROR: String '{}' should have matched 'PATTERN_FOR_LOOP', but didn't.", value_str);
+                    }
+                }
+            }
+        }
+    }
+    
+    #[test]
+    fn test_regex_pattern_while_loop() {
+        // Test PATTERN_WHILE_LOOP.
+        // Construct hashmap containing strings to match.
+        let mut test_strings: HashMap<u32, (bool, &str)> = HashMap::new();
+        test_strings.insert(0, (true, "while a:"));
+        test_strings.insert(1, (true, "while a > 5:"));
+        test_strings.insert(2, (true, "while a == 4:"));
+        test_strings.insert(3, (true, "while a.get_b(c).d + 6 < 70 * q - p:"));
+        test_strings.insert(4, (false, "for a in b:"));
+        test_strings.insert(5, (false, "def func(a, b):"));
+        test_strings.insert(6, (true, "   while   a   > p+5:   "));
+        test_strings.insert(7, (true, "   while   a   > p+5  :   "));
+        test_strings.insert(8, (false, "class Rect:"));
+        test_strings.insert(9, (false, "class Rect(Shape):"));
+        test_strings.insert(10, (false, "a = b.g + 5:"));
+        
+        // Construct hashmap containing hashmaps containing values of named groups.
+        let mut test_matches: HashMap<u32, HashMap<&str, &str>> = HashMap::new();
+        test_matches.insert(0, HashMap::from([("condition", "a")]));
+        test_matches.insert(1, HashMap::from([("condition", "a > 5")]));
+        test_matches.insert(2, HashMap::from([("condition", "a == 4")]));
+        test_matches.insert(3, HashMap::from([("condition", "a.get_b(c).d + 6 < 70 * q - p")]));
+        test_matches.insert(4, HashMap::from([("condition", "")]));
+        test_matches.insert(5, HashMap::from([("condition", "")]));
+        test_matches.insert(6, HashMap::from([("condition", "a   > p+5")]));
+        test_matches.insert(7, HashMap::from([("condition", "a   > p+5")]));
+        test_matches.insert(8, HashMap::from([("condition", "")]));
+        test_matches.insert(9, HashMap::from([("condition", "")]));
+        test_matches.insert(10, HashMap::from([("condition", "")]));
+        
+        // Run tests.
+        let re = Regex::new(PATTERN_WHILE_LOOP).unwrap();
+        for (key_str, (should_match, value_str)) in test_strings.iter() {
+            let capt = re.captures(value_str);
+            let map = test_matches.get(&key_str).unwrap();
+            match capt {
+                Some(a) => {
+                    if *should_match {
+                        for (key, value) in map.iter() {
+                            assert_eq!(&&a[*key].trim().to_string(), value);
+                        }
+                    } else {
+                        panic!("ERROR: String '{}' should not have matched 'PATTERN_WHILE_LOOP', but did.", value_str);
+                    }
+                }, 
+                None => {
+                    if *should_match {
+                        panic!("ERROR: String '{}' should have matched 'PATTERN_WHILE_LOOP', but didn't.", value_str);
+                    }
+                }
+            }
+        }
+    }
+    
+    #[test]
+    fn test_regex_pattern_function_call_expression() {
+        // Test PATTERN_FUNCTION_CALL_EXPRESSION.
+        // Construct hashmap containing strings to match.
+        let mut test_strings: HashMap<u32, (bool, &str)> = HashMap::new();
+        test_strings.insert(0, (true, "function(a_rere04304fTGER)"));
+        test_strings.insert(1, (true, "_efwfEFWF37423GgrGrg(g5454GFGge343WSFEFrw,\"Some string here!!! $%@%&^*&%^&@$@#$^%^:\\\">\")"));
+        test_strings.insert(2, (true, "function()"));
+        test_strings.insert(3, (false, "5function(a_rere04304fTGER)"));
+        test_strings.insert(4, (false, "53453453"));
+        test_strings.insert(5, (false, "function(a_rere04304fTGER"));
+        test_strings.insert(6, (false, "fwfwfwh5353RGGE__egerge"));
+        test_strings.insert(7, (true, "fwfwfwh5353RGGE__egerge(a=[5, 6, b, c],b={\"a\": 5},c=\"\"\"gehgghe\"\"\")"));
+        test_strings.insert(8, (false, "$@#$@eGERGegEG43534_etgerg$%$#5"));
+        test_strings.insert(9, (false, "i*j+(k%l)"));
+        
+        // Construct hashmap containing hashmaps containing values of named groups.
+        let mut test_matches: HashMap<u32, HashMap<&str, &str>> = HashMap::new();
+        test_matches.insert(0, HashMap::from([("name", "function"), ("arguments", "a_rere04304fTGER")]));
+        test_matches.insert(1, HashMap::from([("name", "_efwfEFWF37423GgrGrg"), ("arguments", "g5454GFGge343WSFEFrw,\"Some string here!!! $%@%&^*&%^&@$@#$^%^:\\\">\"")]));
+        test_matches.insert(2, HashMap::from([("name", "function"), ("arguments", "")]));
+        test_matches.insert(3, HashMap::from([("name", ""), ("arguments", "")]));
+        test_matches.insert(4, HashMap::from([("name", ""), ("arguments", "")]));
+        test_matches.insert(5, HashMap::from([("name", ""), ("arguments", "")]));
+        test_matches.insert(6, HashMap::from([("name", ""), ("arguments", "")]));
+        test_matches.insert(7, HashMap::from([("name", "fwfwfwh5353RGGE__egerge"), ("arguments", "a=[5, 6, b, c],b={\"a\": 5},c=\"\"\"gehgghe\"\"\"")]));
+        test_matches.insert(8, HashMap::from([("name", ""), ("arguments", "")]));
+        test_matches.insert(9, HashMap::from([("name", ""), ("arguments", "")]));
+        
+        // Run tests.
+        let re = Regex::new(PATTERN_FUNCTION_CALL_EXPRESSION).unwrap();
+        for (key_str, (should_match, value_str)) in test_strings.iter() {
+            let capt = re.captures(value_str);
+            let map = test_matches.get(&key_str).unwrap();
+            match capt {
+                Some(a) => {
+                    if *should_match {
+                        for (key, value) in map.iter() {
+                            assert_eq!(&&a[*key], value);
+                        }
+                    } else {
+                        panic!("ERROR: String '{}' should not have matched 'PATTERN_FUNCTION_CALL_EXPRESSION', but did.", value_str);
+                    }
+                }, 
+                None => {
+                    if *should_match {
+                        panic!("ERROR: String '{}' should have matched 'PATTERN_FUNCTION_CALL_EXPRESSION', but didn't.", value_str);
+                    }
+                }
+            }
+        }
+    }
+    
+    #[test]
+    fn test_regex_pattern_array_dict_access_expression() {
+        // Test PATTERN_ARRAY_DICT_ACCESS_EXPRESSION.
+        // Construct hashmap containing strings to match.
+        let mut test_strings: HashMap<u32, (bool, &str)> = HashMap::new();
+        test_strings.insert(0, (true, "a[5]"));
+        test_strings.insert(1, (false, "a[5"));
+        test_strings.insert(2, (true, "_453GTGRtgrt345[4343*GFGF44_gdgdfg+i*5]"));
+        test_strings.insert(3, (true, "dict[\"Banaan4274892$@$@^$^$^$!!@)(*^[\"]"));
+        test_strings.insert(4, (false, "gegegegeggdg"));
+        test_strings.insert(5, (false, "3535[3534534]"));
+        test_strings.insert(6, (false, "function(a, b, c, d, e)"));
+        test_strings.insert(7, (false, "class Rect():"));
+        test_strings.insert(8, (false, "def function(a, b, c, d):"));
+        test_strings.insert(9, (false, "Banaan"));
+        
+        // Construct hashmap containing hashmaps containing values of named groups.
+        let mut test_matches: HashMap<u32, HashMap<&str, &str>> = HashMap::new();
+        test_matches.insert(0, HashMap::from([("name", "a"), ("index", "5")]));
+        test_matches.insert(1, HashMap::from([("name", ""), ("index", "")]));
+        test_matches.insert(2, HashMap::from([("name", "_453GTGRtgrt345"), ("index", "4343*GFGF44_gdgdfg+i*5")]));
+        test_matches.insert(3, HashMap::from([("name", "dict"), ("index", "\"Banaan4274892$@$@^$^$^$!!@)(*^[\"")]));
+        test_matches.insert(4, HashMap::from([("name", ""), ("index", "")]));
+        test_matches.insert(5, HashMap::from([("name", ""), ("index", "")]));
+        test_matches.insert(6, HashMap::from([("name", ""), ("index", "")]));
+        test_matches.insert(7, HashMap::from([("name", ""), ("index", "")]));
+        test_matches.insert(8, HashMap::from([("name", ""), ("index", "")]));
+        test_matches.insert(9, HashMap::from([("name", ""), ("index", "")]));
+        
+        // Run tests.
+        let re = Regex::new(PATTERN_ARRAY_DICT_ACCESS_EXPRESSION).unwrap();
+        for (key_str, (should_match, value_str)) in test_strings.iter() {
+            let capt = re.captures(value_str);
+            let map = test_matches.get(&key_str).unwrap();
+            match capt {
+                Some(a) => {
+                    if *should_match {
+                        for (key, value) in map.iter() {
+                            assert_eq!(&&a[*key], value);
+                        }
+                    } else {
+                        panic!("ERROR: String '{}' should not have matched 'PATTERN_ARRAY_DICT_ACCESS_EXPRESSION', but did.", value_str);
+                    }
+                }, 
+                None => {
+                    if *should_match {
+                        panic!("ERROR: String '{}' should have matched 'PATTERN_ARRAY_DICT_ACCESS_EXPRESSION', but didn't.", value_str);
+                    }
+                }
+            }
+        }
+    }
+    
+    #[test]
+    fn test_regex_pattern_variable_name_expression() {
+        // Test PATTERN_VARIABLE_NAME_EXPRESSION.
+        // Construct hashmap containing strings to match.
+        let mut test_strings: HashMap<u32, (bool, &str)> = HashMap::new();
+        test_strings.insert(0, (true, "_56"));
+        test_strings.insert(1, (true, "ffsefSF__r34534"));
+        test_strings.insert(2, (true, "name"));
+        test_strings.insert(3, (true, "something"));
+        test_strings.insert(4, (true, "rhrht4535_eGERGERGERGER534534grtYrthrt"));
+        test_strings.insert(5, (false, "5"));
+        test_strings.insert(6, (false, "553_3453453"));
+        test_strings.insert(7, (false, "53535THTRHRTHrhrth__H242"));
+        
+        // Run tests.
+        let re = Regex::new(PATTERN_VARIABLE_NAME_EXPRESSION).unwrap();
+        for (_key_str, (should_match, value_str)) in test_strings.iter() {
+            let capt = re.captures(value_str);
+            match capt {
+                Some(_) => {
+                    if !*should_match {
+                        panic!("ERROR: String '{}' should not have matched 'PATTERN_VARIABLE_NAME_EXPRESSION', but did.", value_str);
+                    }
+                }, 
+                None => {
+                    if *should_match {
+                        panic!("ERROR: String '{}' should have matched 'PATTERN_VARIABLE_NAME_EXPRESSION', but didn't.", value_str);
+                    }
+                }
+            }
+        }
+    }
+    
+    #[test]
+    fn test_regex_pattern_with_statement() {
+        // Test PATTERN_WITH_STATEMENT.
+        // Construct hashmap containing strings to match.
+        let mut test_strings: HashMap<u32, (bool, &str)> = HashMap::new();
+        test_strings.insert(0, (true, "with open(\"file.txt\") as file:"));
+        test_strings.insert(1, (true, "with socket.accept(\"127.0.0.1\", 1234) as conn:"));
+        test_strings.insert(2, (true, "  with socket.accept(\"127.0.0.1\", 1234) as conn:"));
+        test_strings.insert(3, (true, "with socket.accept(\"127.0.0.1\", 1234) as conn  :"));
+        test_strings.insert(4, (true, "     with     banaan(appel    ,    peer)    as    _54353greGG_TRHRTHRTH  :    "));
+        test_strings.insert(5, (false, "def func():"));
+        test_strings.insert(6, (false, "while a > 5:"));
+        test_strings.insert(7, (false, "class Shape(Rect):"));
+        test_strings.insert(8, (false, "class Shape:"));
+        test_strings.insert(9, (false, "for a in b:"));
+        test_strings.insert(10, (false, "if a == b:"));
+        test_strings.insert(11, (false, "elif a > b:"));
+        test_strings.insert(12, (false, "else:"));
+        test_strings.insert(13, (false, "b = 5"));
+        
+        // Construct hashmap containing hashmaps containing values of named groups.
+        let mut test_matches: HashMap<u32, HashMap<&str, &str>> = HashMap::new();
+        test_matches.insert(0, HashMap::from([("expression", "open(\"file.txt\")"), ("alias", "file")]));
+        test_matches.insert(1, HashMap::from([("expression", "socket.accept(\"127.0.0.1\", 1234)"), ("alias", "conn")]));
+        test_matches.insert(2, HashMap::from([("expression", "socket.accept(\"127.0.0.1\", 1234)"), ("alias", "conn")]));
+        test_matches.insert(3, HashMap::from([("expression", "socket.accept(\"127.0.0.1\", 1234)"), ("alias", "conn")]));
+        test_matches.insert(4, HashMap::from([("expression", "banaan(appel    ,    peer)   "), ("alias", "_54353greGG_TRHRTHRTH")]));
+        test_matches.insert(5, HashMap::from([("expression", ""), ("alias", "")]));
+        test_matches.insert(6, HashMap::from([("expression", ""), ("alias", "")]));
+        test_matches.insert(7, HashMap::from([("expression", ""), ("alias", "")]));
+        test_matches.insert(8, HashMap::from([("expression", ""), ("alias", "")]));
+        test_matches.insert(9, HashMap::from([("expression", ""), ("alias", "")]));
+        test_matches.insert(10, HashMap::from([("expression", ""), ("alias", "")]));
+        test_matches.insert(11, HashMap::from([("expression", ""), ("alias", "")]));
+        test_matches.insert(12, HashMap::from([("expression", ""), ("alias", "")]));
+        test_matches.insert(13, HashMap::from([("expression", ""), ("alias", "")]));
+        
+        // Run tests.
+        let re = Regex::new(PATTERN_WITH_STATEMENT).unwrap();
+        for (key_str, (should_match, value_str)) in test_strings.iter() {
+            let capt = re.captures(value_str);
+            let map = test_matches.get(&key_str).unwrap();
+            match capt {
+                Some(a) => {
+                    if *should_match {
+                        for (key, value) in map.iter() {
+                            assert_eq!(&&a[*key], value);
+                        }
+                    } else {
+                        panic!("ERROR: String '{}' should not have matched 'PATTERN_WITH_STATEMENT', but did.", value_str);
+                    }
+                }, 
+                None => {
+                    if *should_match {
+                        panic!("ERROR: String '{}' should have matched 'PATTERN_WITH_STATEMENT', but didn't.", value_str);
                     }
                 }
             }
@@ -2587,6 +4287,27 @@ mod tests {
     }
     
     #[test]
+    fn test_get_indentation_length() {
+        let lines: Vec<Line> = vec![
+            Line::new(12, "No indentation"), 
+            Line::new(23, "  a"), 
+            Line::new(34, "    b"), 
+            Line::new(45, " a"), 
+            Line::new(56, "          a"), 
+            Line::new(67, "   a"), 
+            Line::new(78, "                     a"), 
+        ];
+        
+        let indentations: Vec<usize> = vec![
+            0, 2, 4, 1, 10, 3, 21
+        ];
+        
+        for (line, indentation) in std::iter::zip(lines, indentations) {
+            assert_eq!(get_indentation_length(&line), indentation);
+        }
+    }
+    
+    #[test]
     fn test_create_line() {
         let test_cases: Vec<(usize, &str)> = vec![
             (25, "Hi there"), 
@@ -2645,6 +4366,19 @@ mod tests {
             Line::new(24, "\' a=5  \\\'  b=6  \'"), 
             Line::new(87, "\" t = time.time(\'Banana\')  \\\"  b=6  \""), 
             Line::new(55, "=535"), 
+            Line::new(36, "x += 10 * 5"), 
+            Line::new(36, "x -= 10 * 5"), 
+            Line::new(36, "x /= 10 * 5"), 
+            Line::new(36, "x *= 10 * 5"), 
+            Line::new(36, "x //= 10 * 5"), 
+            Line::new(36, "x **= 10 * 5"), 
+            Line::new(36, "x %= 10 * 5"), 
+            Line::new(36, "x ^= 10 * 5"), 
+            Line::new(36, "x &= 10 * 5"), 
+            Line::new(36, "x |= 10 * 5"), 
+            Line::new(52, "a = 5 # not b = 10"), 
+            Line::new(25, "var4.get(\"a.b.c.property\").value = 5"), 
+            Line::new(25, "var4.get(\"a.b.c.property # random non comment =\").value = 5"), 
             // The test below can be used to check if the grapheme cluster implementation works in the future.
             // Line::new(26, "d[\"⫁⦲⸀␩⠊⫅┤◦☬⑏▉⢀✁ⷞ○⋅Ⰼ\"] = \"⿈✦ⵀⳎ⟚☳┞⟑☷⛩⟒⌀⨮⭸⹖⒣\""), 
         ];
@@ -2669,7 +4403,7 @@ mod tests {
             Some(8), 
             Some(18), 
             None, 
-            None, 
+            Some(14), 
             Some(35), 
             Some(21), 
             Some(4), 
@@ -2687,6 +4421,19 @@ mod tests {
             None, 
             None, 
             None, 
+            Some(3), 
+            Some(3), 
+            Some(3), 
+            Some(3), 
+            Some(4), 
+            Some(4), 
+            Some(3), 
+            Some(3), 
+            Some(3), 
+            Some(3), 
+            Some(2), 
+            Some(33), 
+            Some(56), 
             // Result of the grapheme cluster test above. This is not necessarily the correct answer, just the number of characters sublime text indicates.
             //Some(25), 
         ];
@@ -2711,6 +4458,18 @@ mod tests {
             Line::new(13, "torch.repeat_interleave(x, dim=2, repeats=n_rep)"), 
             Line::new(76, "a = torch.repeat_interleave(x, dim=2, repeats=n_rep)"), 
             Line::new(52, "amount: int = 5"), 
+            Line::new(36, "x += 10 * 5"), 
+            Line::new(36, "x+=10*5"), 
+            Line::new(36, "x -= 10 * 5"), 
+            Line::new(36, "x /= 10 * 5"), 
+            Line::new(36, "x *= 10 * 5"), 
+            Line::new(36, "x //= 10 * 5"), 
+            Line::new(36, "x **= 10 * 5"), 
+            Line::new(36, "x %= 10 * 5"), 
+            Line::new(36, "x ^= 10 * 5"), 
+            Line::new(36, "x &= 10 * 5"), 
+            Line::new(36, "x |= 10 * 5"), 
+            Line::new(56, "a.get_b(c).d += 5 * q + p"), 
         ];
         
         let test_results: Vec<Option<Assignment>> = vec![
@@ -2719,12 +4478,24 @@ mod tests {
             None, 
             Some(Assignment {name: "class_var1".to_string(), value: "5".to_string(), source: test_lines.get(3).unwrap().clone()}), 
             None, 
-            None, 
+            Some(Assignment {name: "self.gc_collected".to_string(), value: "self.gc_collected + (info[\"collected\"])".to_string(), source: test_lines.get(5).unwrap().clone()}), 
             Some(Assignment {name: "self.gc_collected".to_string(), value: "info[\"collected\"]".to_string(), source: test_lines.get(6).unwrap().clone()}), 
             None, 
             None, 
             Some(Assignment {name: "a".to_string(), value: "torch.repeat_interleave(x, dim=2, repeats=n_rep)".to_string(), source: test_lines.get(9).unwrap().clone()}), 
             Some(Assignment {name: "amount".to_string(), value: "5".to_string(), source: test_lines.get(10).unwrap().clone()}), 
+            Some(Assignment {name: "x".to_string(), value: "x + (10 * 5)".to_string(), source: test_lines.get(11).unwrap().clone()}), 
+            Some(Assignment {name: "x".to_string(), value: "x+ (10*5)".to_string(), source: test_lines.get(12).unwrap().clone()}), 
+            Some(Assignment {name: "x".to_string(), value: "x - (10 * 5)".to_string(), source: test_lines.get(13).unwrap().clone()}), 
+            Some(Assignment {name: "x".to_string(), value: "x / (10 * 5)".to_string(), source: test_lines.get(14).unwrap().clone()}), 
+            Some(Assignment {name: "x".to_string(), value: "x * (10 * 5)".to_string(), source: test_lines.get(15).unwrap().clone()}), 
+            Some(Assignment {name: "x".to_string(), value: "x // (10 * 5)".to_string(), source: test_lines.get(16).unwrap().clone()}), 
+            Some(Assignment {name: "x".to_string(), value: "x ** (10 * 5)".to_string(), source: test_lines.get(17).unwrap().clone()}), 
+            Some(Assignment {name: "x".to_string(), value: "x % (10 * 5)".to_string(), source: test_lines.get(18).unwrap().clone()}), 
+            Some(Assignment {name: "x".to_string(), value: "x ^ (10 * 5)".to_string(), source: test_lines.get(19).unwrap().clone()}), 
+            Some(Assignment {name: "x".to_string(), value: "x & (10 * 5)".to_string(), source: test_lines.get(20).unwrap().clone()}), 
+            Some(Assignment {name: "x".to_string(), value: "x | (10 * 5)".to_string(), source: test_lines.get(21).unwrap().clone()}), 
+            Some(Assignment {name: "a.get_b(c).d".to_string(), value: "a.get_b(c).d + (5 * q + p)".to_string(), source: test_lines.get(22).unwrap().clone()}), 
         ];
         
         for (line, expected_result) in std::iter::zip(test_lines, test_results) {
@@ -3662,54 +5433,6 @@ mod tests {
             assert_eq!(line_is_import(&line, &mut writer), result);
         }
         
-        // Test File::line_is_global_var().
-        let lines: Vec<Line> = vec![
-            Line::new(1, "GLOB = \"Hello world!\""), 
-            Line::new(2, "GLOB"), 
-            Line::new(3, "a = 5 # Comment"), 
-            Line::new(4, "print(\"Foo\")"), 
-            Line::new(5, "a.b = 5"), 
-            Line::new(6, "g[5] = false"), 
-            Line::new(7, "b = [1, 2, 3, 4] # Foo"), 
-            Line::new(8, "c += 100"), 
-            Line::new(9, "import math"), 
-            Line::new(1, "from os import listdir"), 
-            Line::new(2, "def func(a=5, b=\"Hello world!\"):"), 
-            Line::new(3, "class Rect(object): # Define class."), 
-            Line::new(4, "GLOBAL_VAR = 5 # Comment."), 
-            Line::new(5, "import math # import."), 
-            Line::new(6, "from os import listdir # import."), 
-            Line::new(7, "def func(): # Define func."), 
-            Line::new(8, " b = 5 # Bar"), 
-            Line::new(9, "      foo = [bar, baz] # Baz"), 
-        ];
-        
-        let expected_results: Vec<bool> = vec![
-            true, 
-            false, 
-            true, 
-            false, 
-            false, 
-            false, 
-            true, 
-            false, 
-            false, 
-            false, 
-            false, 
-            false, 
-            true, 
-            false, 
-            false, 
-            false, 
-            true, 
-            true, 
-        ];
-        
-        for (line, result) in std::iter::zip(lines, expected_results) {
-            println!("Line is global variable: '{}'", line.as_string(0).trim_end_matches("\n"));
-            assert_eq!(line_is_global_var(&line), result);
-        }
-        
         // Test File::line_is_function_start().
         let lines: Vec<Line> = vec![
             Line::new(1, "  def func(a=5, b=6):  "), 
@@ -3734,7 +5457,6 @@ mod tests {
         ];
         
         for (line, result) in std::iter::zip(lines, expected_results) {
-            println!("Line is function start: '{}'", line.as_string(0).trim_end_matches("\n"));
             assert_eq!(line_is_function_start(&line), result);
         }
         
@@ -3940,6 +5662,679 @@ mod tests {
         
         // Flush writer.
         flush_writer(&mut writer);
+    }
+    
+    #[test]
+    fn test_file_scan() {
+        // Initialize writer.
+        let stdout_handle = std::io::stdout();
+        let mut writer: BufWriter<Box<dyn Write>> = BufWriter::new(Box::new(stdout_handle));
+        
+        let filenames: Vec<(&str, usize)> = vec![
+            ("test/file_scan_no_functions_no_classes.py", 2), 
+            ("test/file_scan_functions.py", 5), 
+            ("test/file_scan_classes.py", 5), 
+            ("test/file_scan_loop_at_end_of_function.py", 2), 
+            ("test/file_scan_practical_file_1.py", 0), 
+            ("test/file_scan_if_statements.py", 7), 
+            ("test/file_scan_global_variables.py", 3), 
+            //("test/file_scan_practical_file_2.py", x), 
+        ];
+        for (filename, expected_number_of_warnings) in filenames.iter() {
+            // Create file.
+            let source: Vec<Line> = vec_str_to_vec_line(&get_lines_for_test(filename));
+            let file: File = File::new(filename, &source, &mut writer);
+            
+            // Useful for knowing which warnings belong to which file while debugging.
+            //write_to_writer(&mut writer, format!("Doing `{}`\n", filename).as_bytes());
+            //flush_writer(&mut writer);
+            
+            // Scan file.
+            file.scan(&mut writer);
+            
+            // Get buffer from writer.
+            let buffer_vec: Vec<u8> = writer.buffer().to_vec();
+            let buffer: String = String::from_utf8(buffer_vec).unwrap();
+            
+            // Check occurences of "WARNING".
+            let number_of_warnings: usize = buffer.matches("WARNING").count();
+            assert_eq!(number_of_warnings, *expected_number_of_warnings);
+            
+            // Reset writer.
+            let stdout_handle = std::io::stdout();
+            writer = BufWriter::new(Box::new(stdout_handle));
+        }
+    }
+    
+    #[test]
+    fn test_get_variables_from_assignment() {
+        // Initialize writer.
+        let stdout_handle = std::io::stdout();
+        let _writer: BufWriter<Box<dyn Write>> = BufWriter::new(Box::new(stdout_handle));
+        
+        // Create vector of assignments.
+        let assignments: Vec<Assignment> = vec![
+            Assignment::new(&Line::new(10, "x += 5")).unwrap(), 
+            Assignment::new(&Line::new(62, "x = (a | b) + (c & d) * gh / 5 + b")).unwrap(), 
+            Assignment::new(&Line::new(54, "x[a], y[b] = c, d")).unwrap(), 
+            Assignment::new(&Line::new(17, "x.get_a(b).func(w, y, z).blob += q * r * s")).unwrap(), 
+            Assignment::new(&Line::new(98, "c = 5")).unwrap(), 
+            Assignment::new(&Line::new(72, "q = a + b - c * d / e & f | g ^ h % i ** j // k")).unwrap(), 
+        ];
+        
+        // Create vector of hashmap results.
+        let expected_results: Vec<HashMap<String, Vec<String>>> = vec![
+            [("check".to_string(), vec!["x".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string(), "gh".to_string()]), ("new".to_string(), vec!["x".to_string()])].into_iter().collect(), 
+            [("check".to_string(), vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string(), "x".to_string(), "y".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["x".to_string(), "b".to_string(), "w".to_string(), "y".to_string(), "z".to_string(), "q".to_string(), "r".to_string(), "s".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec![]), ("new".to_string(), vec!["c".to_string()])].into_iter().collect(), 
+            [("check".to_string(), vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string(), "e".to_string(), "f".to_string(), "g".to_string(), "h".to_string(), "i".to_string(), "j".to_string(), "k".to_string()]), ("new".to_string(), vec!["q".to_string()])].into_iter().collect(), 
+        ];
+        
+        // Run tests.
+        for (assignment, mut expected_result) in std::iter::zip(assignments, expected_results) {
+            let mut result: HashMap<String, Vec<String>> = get_variables_from_assignment(assignment.clone());
+            
+            result.get_mut("new").unwrap().sort();
+            result.get_mut("check").unwrap().sort();
+            expected_result.get_mut("new").unwrap().sort();
+            expected_result.get_mut("check").unwrap().sort();
+            
+            // Useful for debugging.
+            //write_to_writer(&mut writer, format!("Testing `{:?}`\n", assignment.clone()).as_bytes());
+            //flush_writer(&mut writer);
+            
+            assert_eq!(result, expected_result);
+        }
+    }
+    
+    #[test]
+    fn test_handle_assignment_left_side() {
+        // Initialize writer.
+        let stdout_handle = std::io::stdout();
+        let _writer: BufWriter<Box<dyn Write>> = BufWriter::new(Box::new(stdout_handle));
+        
+        // Create vector of strings.
+        let strings: Vec<String> = vec![
+            "x".to_string(), 
+            "a[b], c[d]".to_string(), 
+            "g[i], b, c, h[j]".to_string(), 
+            "a.b.get_z(g, h, i, j).t[k + (l - m * n) / (o & p | (q ^ r) % s) ** (t // u) + b[i * j + 5 * t]]".to_string(), 
+            "_42424GRGER_4242gFG".to_string(), 
+            "a.get_b(c).d".to_string(), 
+            "".to_string(), 
+        ];
+        
+        // Create vector of hashmap results.
+        let expected_results: Vec<HashMap<String, Vec<String>>> = vec![
+            [("check".to_string(), vec![]), ("new".to_string(), vec!["x".to_string()])].into_iter().collect(), 
+            [("check".to_string(), vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["g".to_string(), "i".to_string(), "h".to_string(), "j".to_string()]), ("new".to_string(), vec!["b".to_string(), "c".to_string()])].into_iter().collect(), 
+            [("check".to_string(), vec!["a".to_string(), "g".to_string(), "h".to_string(), "i".to_string(), "j".to_string(), "k".to_string(), "l".to_string(), "m".to_string(), "n".to_string(), "o".to_string(), "p".to_string(), "q".to_string(), "r".to_string(), "s".to_string(), "t".to_string(), "u".to_string(), "b".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec![]), ("new".to_string(), vec!["_42424GRGER_4242gFG".to_string()])].into_iter().collect(), 
+            [("check".to_string(), vec!["a".to_string(), "c".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec![]), ("new".to_string(), vec![])].into_iter().collect(), 
+            
+        ];
+        
+        // Run tests.
+        for (string, expected_result) in std::iter::zip(strings, expected_results) {
+            let result: HashMap<String, Vec<String>> = handle_assignment_left_side(string);
+            assert_eq!(result, expected_result);
+        }
+    }
+    
+    #[test]
+    fn test_handle_assignment_left_side_single() {
+        // Initialize writer.
+        let stdout_handle = std::io::stdout();
+        let _writer: BufWriter<Box<dyn Write>> = BufWriter::new(Box::new(stdout_handle));
+        
+        // Create vector of strings.
+        let strings: Vec<String> = vec![
+            "x".to_string(), 
+            "a[b]".to_string(), 
+            "g[i]".to_string(), 
+            "a.b.get_z(g, h, i, j).t[k + (l - m * n) / (o & p | (q ^ r) % s) ** (t // u) + b[i * j + 5 * t]]".to_string(), 
+            "grgeg".to_string(), 
+            "_42424GRGER_4242gFG".to_string(), 
+            "a.get_b(f(g(h * i) * k(l / m % j)) * p).get_q(r * s(t)).m".to_string(), 
+            "f[a].get_b(c * g(d)).k".to_string(), 
+            "".to_string(), 
+            "a[b] * c[d] + f(g[h] - jk[5])".to_string(), 
+            "a.b.c(d.e[f.g], \"h.i, g\", \'Banaan.Fruit\', \"\"\"Multiline string, 5\"\"\", \'\'\'Multiline.Single, 6\'\'\').property".to_string(), 
+            "a.get_b(c).d".to_string(), 
+            
+        ];
+        
+        // Create vector of hashmap results.
+        let expected_results: Vec<HashMap<String, Vec<String>>> = vec![
+            [("check".to_string(), vec![]), ("new".to_string(), vec!["x".to_string()])].into_iter().collect(), 
+            [("check".to_string(), vec!["a".to_string(), "b".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["g".to_string(), "i".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["a".to_string(), "g".to_string(), "h".to_string(), "i".to_string(), "j".to_string(), "k".to_string(), "l".to_string(), "m".to_string(), "n".to_string(), "o".to_string(), "p".to_string(), "q".to_string(), "r".to_string(), "s".to_string(), "t".to_string(), "u".to_string(), "b".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec![]), ("new".to_string(), vec!["grgeg".to_string()])].into_iter().collect(), 
+            [("check".to_string(), vec![]), ("new".to_string(), vec!["_42424GRGER_4242gFG".to_string()])].into_iter().collect(), 
+            [("check".to_string(), vec!["a".to_string(), "h".to_string(), "i".to_string(), "l".to_string(), "m".to_string(), "j".to_string(), "p".to_string(), "r".to_string(), "t".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["a".to_string(), "c".to_string(), "d".to_string(), "f".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec![]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string(), "g".to_string(), "h".to_string(), "jk".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["a".to_string(), "d".to_string(), "f".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["a".to_string(), "c".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            
+        ];
+        
+        // Run tests.
+        for (string, mut expected_result) in std::iter::zip(strings, expected_results) {
+            let mut result: HashMap<String, Vec<String>> = handle_assignment_left_side_single(string.clone());
+            
+            result.get_mut("new").unwrap().sort();
+            expected_result.get_mut("new").unwrap().sort();
+            
+            let match_count_new: usize   = std::iter::zip(result.get("new").unwrap(), expected_result.get("new").unwrap()).filter(|&(a, b)| a == b).count();
+            
+            result.get_mut("check").unwrap().sort();
+            expected_result.get_mut("check").unwrap().sort();
+            
+            let match_count_check: usize = std::iter::zip(result.get("check").unwrap(), expected_result.get("check").unwrap()).filter(|&(a, b)| a == b).count();
+            
+            if !(match_count_new == result.get("new").unwrap().len() && match_count_check == result.get("check").unwrap().len()) {
+                println!("Testing `{}`", string.clone());
+                println!("handle_assignment_left_single {:?} {:?}", result, expected_result);
+            }
+            
+            assert_eq!(match_count_new,   result.get("new").unwrap().len());
+            assert_eq!(match_count_check, result.get("check").unwrap().len());
+        }
+    }
+    
+    #[test]
+    fn test_handle_assignment_right_side() {
+        // Initialize writer.
+        let stdout_handle = std::io::stdout();
+        let _writer: BufWriter<Box<dyn Write>> = BufWriter::new(Box::new(stdout_handle));
+        
+        // Create vector of strings.
+        let strings: Vec<String> = vec![
+            "x".to_string(), 
+            "a[b], c[d]".to_string(), 
+            "g[i], b, c, h[j]".to_string(), 
+            "a.b.get_z(g, h, i, j).t[k + (l - m * n) / (o & p | (q ^ r) % s) ** (t // u) + b[i * j + 5 * t]]".to_string(), 
+            "_42424GRGER_4242gFG".to_string(), 
+            "\"Some string\"".to_string(), 
+            "\"\"\"String triple double quotations\"\"\"".to_string(), 
+            "\'Some string\'".to_string(), 
+            "\'\'\'String triple double quotations\'\'\'".to_string(), 
+            "a[b]".to_string(), 
+            "a[b[c[d]]]".to_string(), 
+            "f(g(h(a)))".to_string(), 
+            "f(j(\"Argument to j\"))".to_string(), 
+            "variable".to_string(), 
+            "f(a), g(b), a[H], b.g, \"Random string\"".to_string(), 
+            "".to_string(), 
+        ];
+        
+        // Create vector of hashmap results.
+        let expected_results: Vec<HashMap<String, Vec<String>>> = vec![
+            [("check".to_string(), vec!["x".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["g".to_string(), "i".to_string(), "h".to_string(), "j".to_string(), "b".to_string(), "c".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["a".to_string(), "g".to_string(), "h".to_string(), "i".to_string(), "j".to_string(), "k".to_string(), "l".to_string(), "m".to_string(), "n".to_string(), "o".to_string(), "p".to_string(), "q".to_string(), "r".to_string(), "s".to_string(), "t".to_string(), "u".to_string(), "b".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["_42424GRGER_4242gFG".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec![]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec![]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec![]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec![]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["a".to_string(), "b".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["a".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec![]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["variable".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["a".to_string(), "b".to_string(), "H".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec![]), ("new".to_string(), vec![])].into_iter().collect(), 
+        ];
+        
+        // Run tests.
+        for (string, mut expected_result) in std::iter::zip(strings, expected_results) {
+            let mut result: HashMap<String, Vec<String>> = handle_assignment_right_side(string.clone());
+            
+            result.get_mut("new").unwrap().sort();
+            expected_result.get_mut("new").unwrap().sort();
+            
+            result.get_mut("check").unwrap().sort();
+            expected_result.get_mut("check").unwrap().sort();
+            
+            assert_eq!(result, expected_result);
+        }
+    }
+    
+    #[test]
+    fn test_handle_assignment_right_side_single() {
+        // Initialize writer.
+        let stdout_handle = std::io::stdout();
+        let _writer: BufWriter<Box<dyn Write>> = BufWriter::new(Box::new(stdout_handle));
+        
+        // Create vector of strings.
+        let strings: Vec<String> = vec![
+            "x".to_string(), 
+            "a.b.get_z(g, h, i, j).t[k + (l - m * n) / (o & p | (q ^ r) % s) ** (t // u) + b[i * j + 5 * t]]".to_string(), 
+            "_42424GRGER_4242gFG".to_string(), 
+            "\"Some string\"".to_string(), 
+            "\"\"\"String triple double quotations\"\"\"".to_string(), 
+            "\'Some string\'".to_string(), 
+            "\'\'\'String triple double quotations\'\'\'".to_string(), 
+            "a[b]".to_string(), 
+            "a[b[c[d]]]".to_string(), 
+            "f(g(h(a)))".to_string(), 
+            "f(j(\"Argument to j\"))".to_string(), 
+            "variable".to_string(), 
+            "f(g, a(b), h[k])".to_string(), 
+            "".to_string(), 
+        ];
+        
+        // Create vector of hashmap results.
+        let expected_results: Vec<HashMap<String, Vec<String>>> = vec![
+            [("check".to_string(), vec!["x".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["a".to_string(), "g".to_string(), "h".to_string(), "i".to_string(), "j".to_string(), "k".to_string(), "l".to_string(), "m".to_string(), "n".to_string(), "o".to_string(), "p".to_string(), "q".to_string(), "r".to_string(), "s".to_string(), "t".to_string(), "u".to_string(), "b".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["_42424GRGER_4242gFG".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec![]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec![]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec![]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec![]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["a".to_string(), "b".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["a".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec![]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["variable".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec!["g".to_string(), "b".to_string(), "h".to_string(), "k".to_string()]), ("new".to_string(), vec![])].into_iter().collect(), 
+            [("check".to_string(), vec![]), ("new".to_string(), vec![])].into_iter().collect(), 
+        ];
+        
+        // Run tests.
+        for (string, mut expected_result) in std::iter::zip(strings, expected_results) {
+            let mut result: HashMap<String, Vec<String>> = handle_assignment_right_side(string.clone());
+            
+            result.get_mut("new").unwrap().sort();
+            expected_result.get_mut("new").unwrap().sort();
+            
+            result.get_mut("check").unwrap().sort();
+            expected_result.get_mut("check").unwrap().sort();
+            
+            assert_eq!(result, expected_result);
+        }
+    }
+    
+    #[test]
+    fn test_handle_assignment_expression() {
+        // Initialize writer.
+        let stdout_handle = std::io::stdout();
+        let _writer: BufWriter<Box<dyn Write>> = BufWriter::new(Box::new(stdout_handle));
+        
+        // Create vector of strings.
+        let strings: Vec<String> = vec![
+            "x".to_string(), 
+            "a[b]".to_string(), 
+            "g[i]".to_string(), 
+            "grgeg".to_string(), 
+            "_42424GRGER_4242gFG".to_string(), 
+            "k + (l - m * n) / (o & p | (q ^ r) % s) ** (t // u) + b[i * j + 5 * t]".to_string(), 
+            "".to_string(), 
+            "a + a + a + a + a + (b + b + b)".to_string(), 
+            "a * 5".to_string(), 
+            "a.b.get_z(g, h, i, j).t[k + (l - m * n) / (o & p | (q ^ r) % s) ** (t // u) + b[i * j + 5 * t]]".to_string(), 
+            "a.get_b(c).d".to_string(), 
+            "a.get_b(c).d + 5 * q".to_string(), 
+            "sin(a.b(c) ** 3 + self.base_height * 3 + p)".to_string(), 
+            "a == b".to_string(), 
+            "a >= b".to_string(), 
+            "a <= b".to_string(), 
+            "a != b".to_string(), 
+            "a > b".to_string(), 
+            "a < b".to_string(), 
+            "(a == b) and (c == d)".to_string(), 
+            "(a == b) or (c == d)".to_string(), 
+            "anders and orers".to_string(), 
+            "(anders)and(orers)".to_string(), 
+            "anders or orers".to_string(), 
+            "(anders)or(orers)".to_string(), 
+            "a and b or c".to_string(), 
+        ];
+        
+        let expected_results: Vec<Vec<String>> = vec![
+            vec!["x".to_string()], 
+            vec!["a".to_string(), "b".to_string()], 
+            vec!["g".to_string(), "i".to_string()], 
+            vec!["grgeg".to_string()], 
+            vec!["_42424GRGER_4242gFG".to_string()], 
+            vec!["k".to_string(), "l".to_string(), "m".to_string(), "n".to_string(), "o".to_string(), "p".to_string(), "q".to_string(), "r".to_string(), "s".to_string(), "t".to_string(), "u".to_string(), "b".to_string(), "i".to_string(), "j".to_string()], 
+            vec![], 
+            vec!["a".to_string(), "b".to_string()], 
+            vec!["a".to_string()], 
+            vec!["a".to_string(), "g".to_string(), "h".to_string(), "i".to_string(), "j".to_string(), "k".to_string(), "l".to_string(), "m".to_string(), "n".to_string(), "o".to_string(), "p".to_string(), "q".to_string(), "r".to_string(), "s".to_string(), "t".to_string(), "u".to_string(), "b".to_string()], 
+            vec!["a".to_string(), "c".to_string()], 
+            vec!["a".to_string(), "c".to_string(), "q".to_string()], 
+            vec!["a".to_string(), "c".to_string(), "self".to_string(), "p".to_string()], 
+            vec!["a".to_string(), "b".to_string()], 
+            vec!["a".to_string(), "b".to_string()], 
+            vec!["a".to_string(), "b".to_string()], 
+            vec!["a".to_string(), "b".to_string()], 
+            vec!["a".to_string(), "b".to_string()], 
+            vec!["a".to_string(), "b".to_string()], 
+            vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()], 
+            vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()], 
+            vec!["anders".to_string(), "orers".to_string()], 
+            vec!["anders".to_string(), "orers".to_string()], 
+            vec!["anders".to_string(), "orers".to_string()], 
+            vec!["anders".to_string(), "orers".to_string()], 
+            vec!["a".to_string(), "b".to_string(), "c".to_string()], 
+        ];
+        
+        // Run tests.
+        for (string, mut expected_result) in std::iter::zip(strings, expected_results) {
+            let mut result: Vec<String> = handle_assignment_expression(string.clone(), true, false);
+            
+            result.sort();
+            expected_result.sort();
+            
+            assert_eq!(result, expected_result);
+        }
+    }
+    
+    #[test]
+    fn test_is_enclosed_in_brackets() {
+        // Initialize writer.
+        let stdout_handle = std::io::stdout();
+        let _writer: BufWriter<Box<dyn Write>> = BufWriter::new(Box::new(stdout_handle));
+        
+        // Create vector of strings.
+        let strings: Vec<(bool, String)> = vec![
+            (true, "[]".to_string()), 
+            (true, "()".to_string()), 
+            (true, "[eginegieguier, \"ghrthrt[ hrhrh r hr] ((((eg\"]".to_string()), 
+            (true, "(eginegieguier, \"ghrthrt[ hrhrh r hr] ((((eg\")".to_string()), 
+            (false, "[".to_string()), 
+            (false, "]".to_string()), 
+            (false, "(".to_string()), 
+            (false, ")".to_string()), 
+            (false, "(fbefbwefweytf, \"gegeg)\"".to_string()), 
+            (false, "fbefbwefweytf, \"gegeg(\")".to_string()), 
+            (false, "[\"]\"".to_string()), 
+            (false, "\"[\"]".to_string()), 
+            (false, "ggegengiuenge".to_string()), 
+            (false, "gegege[gegerg]gegeger".to_string()), 
+            (false, "i*j+(k%l)".to_string()), 
+            (false, "d[i*j+(k%l)]".to_string()), 
+            (false, "[]]".to_string()), 
+            (false, "()))".to_string()), 
+        ];
+        
+        // Run tests.
+        for (expected_result, string) in strings {
+            assert_eq!(is_enclosed_in_brackets(string), expected_result);
+        }
+    }
+    
+    #[test]
+    fn test_is_string_literal() {
+        // Create vector of booleans and strings.
+        let strings: Vec<(bool, String)> = vec![
+            (true, "\"\"".to_string()), 
+            (true, "\"Hi there!!\'\'\' h hrh \' \\\"\"".to_string()), 
+            (true, "\'\'".to_string()), 
+            (true, "\'\\\"\'".to_string()), 
+            (true, "\'\'\'Hiiiii \"\"\" gegeg \" tege\'\'\'".to_string()), 
+            (true, "\"\"\"Hkgjegiuehge \' ggeg \'\'\' eg \' eg\"\"\"".to_string()), 
+            (false, "(".to_string()), 
+            (false, ")".to_string()), 
+            (false, "(fbefbwefweytf, \"gegeg)\"".to_string()), 
+            (false, "fbefbwefweytf, \"gegeg(\")".to_string()), 
+            (false, "[\"]\"".to_string()), 
+            (false, "\"[\"]".to_string()), 
+            (false, "ggegengiuenge".to_string()), 
+            (false, "gegege[gegerg]gegeger".to_string()), 
+            (false, "\"\"\"egege\"\"\", \"\"\"egerge\"\"\"".to_string()), 
+            (false, "\'\'\'egege\'\'\', \'\'\'egerge\'\'\'".to_string()), 
+            (false, "\"egege\", \"egerge\"".to_string()), 
+            (false, "\'egege\', \'egerge\'".to_string()), 
+            (false, "\"Text\'".to_string()), 
+            (false, "\'Text\"".to_string()), 
+            (false, "".to_string()), 
+        ];
+        
+        // Run tests.
+        for (expected_result, string) in strings {
+            assert_eq!(is_string_literal(string), expected_result);
+        }
+    }
+    
+    #[test]
+    fn test_is_function_call() {
+        // Create vector of booleans and strings.
+        let strings: Vec<(bool, String)> = vec![
+            (false, "\"\"".to_string()), 
+            (true, "a(b)".to_string()), 
+            (true, "_5353grGRTHrthrth545H_RTH__Hrth_()".to_string()), 
+            (true, "_egegerGERG23424(_57834ngjhd[gegerg[trt.hithere].get_property(5, 6, 7)], some_arg(functionarg, bnmaan, \"Banaanhanger\"), \"\"\"Multiline string inside function call.\"\"\", \'\'\'Multiline string inside function call but single quotations instead of double quotations.\'\'\', a[\'Single quotations dict indexing\'].get_some(5, hi, \"Some string\"))".to_string()), 
+            (false, "a[b]".to_string()), 
+            (false, "a.b(hi, there)".to_string()), 
+            (false, "banaan".to_string()), 
+            (false, "egege53453DGGer_egEg".to_string()), 
+            (false, "Some junk with \"quotations \\\"\" and \'\'\'such\'\'\'. More text [53535[5345345)))){gergerg[\"something\"[}".to_string()), 
+            (false, "a = 5".to_string()), 
+            (false, "a.b = 5".to_string()), 
+            (false, "a, b = 5, 6".to_string()), 
+            (false, "def a(b, c):".to_string()), 
+            (false, "import math".to_string()), 
+            (false, "from math import sin, cos".to_string()), 
+            (false, "class Rect:".to_string()), 
+            (false, "class Rect(Shape):".to_string()), 
+            (false, "a(b) * c(d)".to_string()), 
+            (true, "a(a(b))".to_string()), 
+            (true, "a(b(c) * d(e))".to_string()), 
+            (true, "f(\"\\\")\")".to_string()), 
+            (true, "f(\'\\\')\')".to_string()), 
+            (false, "f(\"\\\")\"".to_string()), 
+            (false, "f\'\\\')\')".to_string()), 
+            (true, "f(\"\\\')\")".to_string()), 
+            (true, "f(\'\\\")\')".to_string()), 
+            (false, "f(a) + 5".to_string()), 
+            (false, "f(a".to_string()), 
+        ];
+        
+        // Run tests.
+        for (expected_result, string) in strings {
+            assert_eq!(is_function_call(string), expected_result);
+        }
+    }
+    
+    #[test]
+    fn test_is_array_access() {
+        // Create vector of booleans and strings.
+        let strings: Vec<(bool, String)> = vec![
+            (true, "a[b]".to_string()), 
+            (false, "a.b[c]".to_string()), 
+            (true, "a[5 * f(g) + b[t.get_property(a[b] + c[d] - g(h * 5)) + 6]]".to_string()), 
+            (false, "f(a)".to_string()), 
+            (false, "f(a]".to_string()), 
+            (false, "[a + b - c]".to_string()), 
+            (false, "class Rect:".to_string()), 
+            (false, "class Rect(Shape):".to_string()), 
+            (false, "def func(a, b):".to_string()), 
+            (false, "import math".to_string()), 
+            (false, "from math import sin, cos, sqrt".to_string()), 
+            (false, "a(b(c) * d(e))".to_string()), 
+            (true, "a[a[a(b)]]".to_string()), 
+            (false, "f\'\\\')\')".to_string()), 
+            (false, "a(b) * c(d)".to_string()), 
+            (false, "a[b] * c[d] - 5".to_string()), 
+            (false, "f[a] + 5".to_string()), 
+            (false, "f[a".to_string()), 
+        ];
+        
+        // Run tests.
+        for (expected_result, string) in strings {
+            assert_eq!(is_array_access(string), expected_result);
+        }
+    }
+    
+    #[test]
+    fn test_contains_arithmetic_symbols_not_enclosed() {
+        // Initialize writer.
+        let stdout_handle = std::io::stdout();
+        let _writer: BufWriter<Box<dyn Write>> = BufWriter::new(Box::new(stdout_handle));
+        
+        // Create vector of booleans and strings.
+        let strings: Vec<(bool, String)> = vec![
+            (true, "a + b".to_string()), 
+            (true, "a - b".to_string()), 
+            (true, "a % b".to_string()), 
+            (true, "a ^ b".to_string()), 
+            (true, "a & b".to_string()), 
+            (true, "a | b".to_string()), 
+            (true, "a < b".to_string()), 
+            (true, "a > b".to_string()), 
+            (true, "a ! b".to_string()), 
+            (true, "a * b".to_string()), 
+            (true, "a / b".to_string()), 
+            (true, "a = b".to_string()), 
+            
+            (false, "f(a + b)".to_string()), 
+            (false, "f(a - b)".to_string()), 
+            (false, "f(a % b)".to_string()), 
+            (false, "f(a ^ b)".to_string()), 
+            (false, "f(a & b)".to_string()), 
+            (false, "f(a | b)".to_string()), 
+            (false, "f(a < b)".to_string()), 
+            (false, "f(a > b)".to_string()), 
+            (false, "f(a ! b)".to_string()), 
+            (false, "f(a * b)".to_string()), 
+            (false, "f(a / b)".to_string()), 
+            (false, "f(a = b)".to_string()), 
+            
+            (false, "f[a + b]".to_string()), 
+            (false, "f[a - b]".to_string()), 
+            (false, "f[a % b]".to_string()), 
+            (false, "f[a ^ b]".to_string()), 
+            (false, "f[a & b]".to_string()), 
+            (false, "f[a | b]".to_string()), 
+            (false, "f[a < b]".to_string()), 
+            (false, "f[a > b]".to_string()), 
+            (false, "f[a ! b]".to_string()), 
+            (false, "f[a * b]".to_string()), 
+            (false, "f[a / b]".to_string()), 
+            (false, "f[a = b]".to_string()), 
+            
+            (false, "f{a + b}".to_string()), 
+            (false, "f{a - b}".to_string()), 
+            (false, "f{a % b}".to_string()), 
+            (false, "f{a ^ b}".to_string()), 
+            (false, "f{a & b}".to_string()), 
+            (false, "f{a | b}".to_string()), 
+            (false, "f{a < b}".to_string()), 
+            (false, "f{a > b}".to_string()), 
+            (false, "f{a ! b}".to_string()), 
+            (false, "f{a * b}".to_string()), 
+            (false, "f{a / b}".to_string()), 
+            (false, "f{a = b}".to_string()), 
+            
+            (false, "\'a + b\'".to_string()), 
+            (false, "\'a - b\'".to_string()), 
+            (false, "\'a % b\'".to_string()), 
+            (false, "\'a ^ b\'".to_string()), 
+            (false, "\'a & b\'".to_string()), 
+            (false, "\'a | b\'".to_string()), 
+            (false, "\'a < b\'".to_string()), 
+            (false, "\'a > b\'".to_string()), 
+            (false, "\'a ! b\'".to_string()), 
+            (false, "\'a * b\'".to_string()), 
+            (false, "\'a / b\'".to_string()), 
+            (false, "\'a = b\'".to_string()), 
+            
+            (false, "\"a + b\"".to_string()), 
+            (false, "\"a - b\"".to_string()), 
+            (false, "\"a % b\"".to_string()), 
+            (false, "\"a ^ b\"".to_string()), 
+            (false, "\"a & b\"".to_string()), 
+            (false, "\"a | b\"".to_string()), 
+            (false, "\"a < b\"".to_string()), 
+            (false, "\"a > b\"".to_string()), 
+            (false, "\"a ! b\"".to_string()), 
+            (false, "\"a * b\"".to_string()), 
+            (false, "\"a / b\"".to_string()), 
+            (false, "\"a = b\"".to_string()), 
+            
+            (false, "a.get(b + c + d)".to_string()), 
+        ];
+        
+        // Run tests.
+        for (expected_result, string) in strings {
+            assert_eq!(contains_arithmetic_symbols_not_enclosed(string), expected_result);
+        }
+    }
+    
+    #[test]
+    fn test_split_by_char() {
+        // Initialize writer.
+        let stdout_handle = std::io::stdout();
+        let _writer: BufWriter<Box<dyn Write>> = BufWriter::new(Box::new(stdout_handle));
+        
+        // Create vector of strings.
+        let strings: Vec<(String, char)> = vec![
+            ("a,b,c".to_string(), ','), 
+            ("a, b, c".to_string(), ','), 
+            ("ggue, \"a, b, c\", hiii, \"hthtrh, rhrthrt;; [hrhr]rh\"".to_string(), ','), 
+            ("ggerngeug55345gGGERERGer".to_string(), ','), 
+            ("\"gege, gergerg,egerge,ge[gegeg]]]]egegerg(ggeg{}{}{}}}}))))egege\"".to_string(), ','), 
+            ("f(a, b, c)".to_string(), ','), 
+            ("g(a, b), h(c, d), [a, b, c]".to_string(), ','), 
+            ("g(a, b, \"Banaan)\"), ghghg".to_string(), ','), 
+            ("), \"rgerger, ())[[[}}}\"".to_string(), ','), 
+            ("a-b+c".to_string(), ','), 
+            ("\"\\\", hi there\"".to_string(), ','), 
+            ("\'\\\', hi there\'".to_string(), ','), 
+            ("\\\"".to_string(), ','), 
+            ("\\\'".to_string(), ','), 
+            
+            ("a.b.c".to_string(), '.'), 
+            ("wfwfwfw.thtrh.grthrt.hrhrth".to_string(), '.'), 
+            ("a(b.b), a.b.c, p.5".to_string(), '.'), 
+            ("_5353GREGRGtgrtg.rhrh6535_gGGre3t3g".to_string(), '.'), 
+            ("a[5 * t - d].func(a+b, c+d, a * (g % 6 // 8) + sum([1, 2, 3])).property".to_string(), '.'), 
+            ("a.b(c.d)".to_string(), '.'), 
+            ("a.b(c.d[e.f], \"g.h = 5\")".to_string(), '.'), 
+        ];
+        
+        // Create vector results.
+        let expected_results: Vec<Vec<String>> = vec![
+            vec!["a".to_string(), "b".to_string(), "c".to_string()], 
+            vec!["a".to_string(), "b".to_string(), "c".to_string()], 
+            vec!["ggue".to_string(), "\"a, b, c\"".to_string(), "hiii".to_string(), "\"hthtrh, rhrthrt;; [hrhr]rh\"".to_string()], 
+            vec!["ggerngeug55345gGGERERGer".to_string()], 
+            vec!["\"gege, gergerg,egerge,ge[gegeg]]]]egegerg(ggeg{}{}{}}}}))))egege\"".to_string()], 
+            vec!["f(a, b, c)".to_string()], 
+            vec!["g(a, b)".to_string(), "h(c, d)".to_string(), "[a, b, c]".to_string()], 
+            vec!["g(a, b, \"Banaan)\")".to_string(), "ghghg".to_string()], 
+            vec![")".to_string(), "\"rgerger, ())[[[}}}\"".to_string()], 
+            vec!["a-b+c".to_string()], 
+            vec!["\"\\\", hi there\"".to_string()], 
+            vec!["\'\\\', hi there\'".to_string()], 
+            vec!["\\\"".to_string()], 
+            vec!["\\\'".to_string()], 
+            
+            vec!["a".to_string(), "b".to_string(), "c".to_string()], 
+            vec!["wfwfwfw".to_string(), "thtrh".to_string(), "grthrt".to_string(), "hrhrth".to_string()], 
+            vec!["a(b.b), a".to_string(), "b".to_string(), "c, p".to_string(), "5".to_string()], 
+            vec!["_5353GREGRGtgrtg".to_string(), "rhrh6535_gGGre3t3g".to_string()], 
+            vec!["a[5 * t - d]".to_string(), "func(a+b, c+d, a * (g % 6 // 8) + sum([1, 2, 3]))".to_string(), "property".to_string()], 
+            vec!["a".to_string(), "b(c.d)".to_string()], 
+            vec!["a".to_string(), "b(c.d[e.f], \"g.h = 5\")".to_string()], 
+        ];
+        
+        // Run tests.
+        for ((string, delimiter), expected_result) in std::iter::zip(strings, expected_results) {
+            assert_eq!(split_by_char(string, delimiter), expected_result);
+        }
     }
     
 }

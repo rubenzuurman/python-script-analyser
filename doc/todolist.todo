@@ -15,6 +15,14 @@ Misc:
    '        'ComplexWarning', 'TooHardError', 'AxisError']'
  ☐ Change from looping over characters to looping over grapheme clusters where applicable. @created(23-07-20 16:24)
  ☐ Change unwraps to expects to avoid panicking without any description. @created(23-07-23 13:22)
+ ✔ Implement a function for checking if some string is a function call. @created(23-08-22 10:51) @done (23-09-02 01:42)
+ ☐ Implement a function for getting the function arguments from a function call. @created(23-08-22 10:52)
+ ☐ Implement a function for getting all variable/function names used in a function call. @created(23-08-22 10:53)
+ ☐ Implement a function for getting all variable/function names used in an assignment left side. @created(23-08-22 11:21)
+ ☐ Implement a function for getting all variable/function names used in an assignment right side. @created(23-08-22 11:21)
+ ☐ Add support for the 'in' keyword not in a for loop. @created(23-09-02 13:40)
+ ☐ Add support for the 'not' keyword. @created(23-09-02 13:41)
+ ☐ Add support for f-strings. @created(23-09-02 13:41)
 ＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿
 Archive:
  ✔ Detect multiline comments ('''/""") and ignore them, it is only a comment if the line is not an assignment. (Any code before start/after end """ on the same line is invalid, except for comments which are valid after the closing """. Also comments with """ cannot be part of a normal line.) (Single quotations also work apparantly.) @created(23-07-26 14:03) @done (23-07-28 18:27) @project(Misc)

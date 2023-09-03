@@ -41,6 +41,15 @@ fn main() {
     let fas_bytes: &[u8] = fas.as_bytes();
     write_to_writer(&mut writer, fas_bytes);
     
+    file.scan(&mut writer);
+    
+    let buffer_vec: Vec<u8> = writer.buffer().to_vec();
+    let buffer: String = String::from_utf8(buffer_vec).unwrap();
+    
+    // Check occurences of "WARNING".
+    let number_of_warnings: usize = buffer.matches("WARNING").count();
+    write_to_writer(&mut writer, format!("Number of warnings: {}\n", number_of_warnings).as_bytes());
+    
     // Flush writer.
     flush_writer(&mut writer);
 }

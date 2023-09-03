@@ -13,6 +13,13 @@ from a import b as c
 from d import e as f, g, h as i
 from j import k aas, baas as p oop, f ish as dog, clo se as you tube
 
+global_var1 = 5
+global_var2 = "Hello world!"
+global_var3 = listdir("hi")
+global_var4 = sys.argv()
+global_var5 = os.path.isfile("./file.txt")
+global_var6 = add(5, 10)
+global_var1.abc = 4
 
 class Rect:
     
